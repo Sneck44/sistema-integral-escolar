@@ -1,74 +1,121 @@
+import calendar as cal
+from datetime import date
+
 import app as core
-from flask import render_template_string
+from flask import render_template_string, request
+from logo_data import LOGO_DATA
+from ui_theme import CSS
 
 app = core.app
+MONTHS = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
+
+def nav_link(href, icon, label):
+    active = request.path == href or (href != '/' and request.path.startswith(href))
+    return f'<a class="nav-link{" active" if active else ""}" href="{href}"><span class="nav-icon">{icon}</span><span>{label}</span></a>'
+
+
+def calendar_widget():
+    today = date.today()
+    weeks = cal.Calendar(firstweekday=0).monthdayscalendar(today.year, today.month)
+    cells = ''
+    for week in weeks:
+        for day_num in week:
+            if not day_num:
+                cells += '<span class="cal-day muted-day"></span>'
+            elif day_num == today.day:
+                cells += f'<span class="cal-day today">{day_num}</span>'
+            else:
+                cells += f'<span class="cal-day">{day_num}</span>'
+    return f'''<div class="calendar-head"><button type="button" class="ghost-btn">‹</button><strong>{MONTHS[today.month]} {today.year}</strong><button type="button" class="ghost-btn">›</button></div><div class="cal-week"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div><div class="cal-grid">{cells}</div>'''
+
+
+def attendance_series():
+    days = [row[0] for row in core.db.session.query(core.Attendance.day).distinct().order_by(core.Attendance.day.desc()).limit(5).all()]
+    days.reverse()
+    values = []
+    for current_day in days:
+        total = core.Attendance.query.filter_by(day=current_day).count()
+        present = core.Attendance.query.filter(core.Attendance.day == current_day, core.Attendance.state.in_(['PRESENTE', 'RETARDO'])).count()
+        values.append(round(present * 100 / total, 1) if total else 0)
+    return days, values
+
+
+def line_chart(days, values):
+    if not days:
+        return '<div class="empty-chart">Registra asistencia para visualizar la tendencia semanal.</div>'
+    width, height, px, py = 600, 180, 24, 18
+    usable_w, usable_h = width - px * 2, height - py * 2
+    span = max(len(values) - 1, 1)
+    points, circles = [], []
+    for index, value in enumerate(values):
+        x = px + (usable_w * index / span if len(values) > 1 else usable_w / 2)
+        y = py + usable_h * (1 - max(0, min(100, value)) / 100)
+        points.append(f'{x:.1f},{y:.1f}')
+        circles.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5"/>')
+    labels = ''.join(f'<span>{d.strftime("%d/%m")}</span>' for d in days)
+    return f'''<div class="chart-wrap"><svg class="line-chart" viewBox="0 0 600 180" preserveAspectRatio="none"><line x1="24" y1="18" x2="576" y2="18"/><line x1="24" y1="90" x2="576" y2="90"/><line x1="24" y1="162" x2="576" y2="162"/><polyline points="{' '.join(points)}"/>{''.join(circles)}</svg><div class="chart-labels">{labels}</div></div>'''
 
 
 def page(title, body):
     c = core.cfg()
     logged = bool(core.auth())
-    nav = ''
-    if logged:
-        nav = '''
-        <aside class="sidebar" id="sidebar">
-          <div class="brand-card"><img src="/static/logo.webp" alt="Logo Telesecundaria Benito Juárez"></div>
-          <nav class="side-nav">
-            <a href="/">⌂ <span>Inicio</span></a>
-            <a href="/students">♟ <span>Alumnos</span></a>
-            <a href="/subjects">▤ <span>Asignaturas</span></a>
-            <a href="/activities">✎ <span>Actividades</span></a>
-            <a href="/attendance">✓ <span>Asistencia</span></a>
-            <a href="/incidents">! <span>Convivencia</span></a>
-            <a href="/config">⚙ <span>Configuración</span></a>
-            <a class="logout" href="/logout">↪ <span>Cerrar sesión</span></a>
-          </nav>
-          <div class="sidebar-foot">INCLUSIÓN, DEMOCRACIA Y PAZ</div>
-        </aside>'''
-
-    tpl = '''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{title}} · Sistema Integral Escolar</title>
-    <style>
-    :root{--wine:#71303f;--wine2:#4b1925;--rose:#9c6874;--gold:#c8a36b;--ink:#251d20;--muted:#766d70;--line:#eadfe2;--ok:#2f7759}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:linear-gradient(135deg,#faf7f7,#f4edef);color:var(--ink)}a{color:var(--wine)}
-    .sidebar{position:fixed;inset:0 auto 0 0;width:250px;background:linear-gradient(180deg,var(--wine2),#683040 60%,#4a1924);padding:14px;color:#fff;display:flex;flex-direction:column;z-index:20;box-shadow:10px 0 35px #4a182418}.brand-card{background:#fff;border-radius:17px;padding:11px;margin-bottom:14px;box-shadow:0 10px 28px #0002}.brand-card img{display:block;width:100%;height:148px;object-fit:contain}.side-nav{display:flex;flex-direction:column;gap:5px;flex:1}.side-nav a{color:#fff;text-decoration:none;padding:11px 13px;border-radius:11px;display:flex;align-items:center;gap:11px;font-weight:650}.side-nav a:hover{background:#ffffff18;transform:translateX(2px)}.side-nav .logout{margin-top:auto}.sidebar-foot{font-size:10px;color:#ead0d7;text-align:center;padding:12px 4px 3px;letter-spacing:.8px}
-    .main-area{margin-left:250px;min-height:100vh}.topbar{height:80px;background:#fffffff1;backdrop-filter:blur(12px);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:10}.school-title{display:flex;align-items:center;gap:12px}.school-mark{width:42px;height:42px;border-radius:13px;background:linear-gradient(145deg,var(--wine),var(--wine2));color:#fff;display:grid;place-items:center;font-size:20px;box-shadow:0 8px 20px #71303f2c}.school-title b{font-size:18px;display:block}.school-title small{color:var(--muted)}.top-meta{display:flex;align-items:center;gap:12px}.pill{background:#f5edef;color:var(--wine);padding:9px 12px;border-radius:999px;font-size:13px;font-weight:750}.avatar{width:40px;height:40px;border-radius:50%;background:linear-gradient(145deg,var(--wine),#a76373);color:#fff;display:grid;place-items:center;font-weight:850}
-    .wrap{max-width:1380px;margin:auto;padding:28px}.card{background:#fff;border:1px solid #eee3e6;border-radius:17px;padding:20px;margin-bottom:18px;box-shadow:0 9px 28px #4a18240b}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}.kpi-card{position:relative;overflow:hidden;min-height:128px}.kpi-card:after{content:"";position:absolute;width:90px;height:90px;border-radius:50%;right:-28px;top:-28px;background:#71303f0a}.kpi-icon{width:44px;height:44px;border-radius:14px;background:#f6ecef;color:var(--wine);display:grid;place-items:center;font-size:20px;margin-bottom:12px}.kpi{font-size:31px;font-weight:850;letter-spacing:-1px}.muted{color:var(--muted);font-size:13px}h1{margin:0 0 7px;font-size:29px;letter-spacing:-.5px}h2{margin-top:0}.page-head{margin-bottom:20px}.page-head p{color:var(--muted);margin:0}
-    .hero{display:grid;grid-template-columns:1.6fr .8fr;gap:18px;margin-bottom:18px}.hero-main{background:linear-gradient(135deg,#fff,#fbf5f6);border:1px solid #eee1e4;border-radius:20px;padding:26px;display:flex;justify-content:space-between;align-items:center;overflow:hidden}.hero-main h1{font-size:31px}.hero-main p{color:var(--muted);max-width:610px}.hero-logo{width:165px;height:150px;object-fit:contain;opacity:.9}.quote{border-radius:20px;padding:24px;color:#fff;background:linear-gradient(145deg,var(--wine),var(--wine2));display:flex;flex-direction:column;justify-content:center;box-shadow:0 12px 30px #71303f25}.quote strong{font-size:17px;line-height:1.45}.quote small{margin-top:12px;color:#ead2d8}
-    .quick{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:12px}.quick a{text-decoration:none;color:var(--ink);background:#fbf7f8;border:1px solid #f0e5e7;border-radius:14px;padding:16px;text-align:center;font-weight:750;transition:.2s}.quick a:hover{border-color:#d7b9c0;transform:translateY(-2px);box-shadow:0 8px 18px #71303f12}.quick i{display:grid;place-items:center;margin:0 auto 8px;width:42px;height:42px;border-radius:13px;background:#fff;color:var(--wine);font-style:normal;font-size:19px}
-    input,select,textarea,button{width:100%;padding:11px 12px;border:1px solid #dccccf;border-radius:10px;font:inherit;background:#fff;color:var(--ink);outline:none}input:focus,select:focus,textarea:focus{border-color:#a96c7b;box-shadow:0 0 0 3px #71303f12}textarea{min-height:90px;resize:vertical}button{background:linear-gradient(135deg,var(--wine),var(--wine2));color:#fff;border:0;font-weight:800;cursor:pointer;box-shadow:0 8px 18px #71303f24}button:hover{filter:brightness(1.06)}label{font-size:13px;font-weight:750;color:#55484d;display:block}label input,label select,label textarea{margin-top:6px}table{width:100%;border-collapse:collapse;min-width:650px}th,td{padding:12px 11px;border-bottom:1px solid #eee5e7;text-align:left}th{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#76676c;background:#fbf8f9}tr:hover td{background:#fdfafb}.scroll{overflow:auto;border-radius:12px}.alert{padding:12px 14px;border-radius:11px;background:#fff2d8;border:1px solid #f1d9a8;margin-bottom:14px}.danger{background:#fde7e7;border-color:#efbcbc}.wide{grid-column:1/-1}
-    .login-layout{min-height:100vh;display:grid;grid-template-columns:1fr 1fr}.login-brand{background:linear-gradient(145deg,#4b1723,#7b3141);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:#fff;text-align:center}.login-brand img{max-width:360px;width:82%;background:#fff;border-radius:24px;padding:18px;box-shadow:0 25px 60px #0003}.login-brand h2{margin:24px 0 6px;font-size:28px}.login-brand p{margin:0;color:#ead3d9}.login-pane{display:grid;place-items:center;padding:32px}.auth-card{width:min(470px,100%);background:#fff;border-radius:22px;padding:30px;border:1px solid #eee2e5;box-shadow:0 25px 60px #4b172316}.auth-card h1{margin-top:6px}.mobile-toggle{display:none;background:var(--wine);width:42px;height:42px;padding:0;border-radius:11px}
-    @media(max-width:980px){.sidebar{transform:translateX(-100%);transition:.25s}.sidebar.open{transform:translateX(0)}.main-area{margin-left:0}.mobile-toggle{display:block}.hero{grid-template-columns:1fr}.topbar{padding:0 16px}.wrap{padding:20px}}
-    @media(max-width:700px){.login-layout{grid-template-columns:1fr}.login-brand{padding:24px}.login-brand img{max-width:220px}.hero-main{padding:20px}.hero-logo{display:none}.hero-main h1{font-size:25px}.grid{grid-template-columns:1fr 1fr}.wrap{padding:15px}.card{padding:15px}}
-    @media(max-width:480px){.grid{grid-template-columns:1fr}.school-title small{display:none}.topbar{height:72px}}
-    </style></head><body>'''
+    tpl = f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#7b1024"><title>{{{{title}}}} · Sistema Integral Escolar</title><style>{CSS}</style></head><body>'''
 
     if logged:
-        tpl += '''<div class="app-shell">''' + nav + '''<section class="main-area"><header class="topbar"><div class="school-title"><button class="mobile-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button><div class="school-mark">▤</div><div><b>Sistema Integral Escolar</b><small>{{c.school}}</small></div></div><div class="top-meta"><span class="pill">Ciclo {{c.cycle}}</span><div class="avatar">A</div></div></header><main class="wrap">{% with ms=get_flashed_messages() %}{% for m in ms %}<div class="alert">{{m}}</div>{% endfor %}{% endwith %}''' + body + '''</main></section></div>'''
+        nav = f'''<aside class="sidebar" id="sidebar"><div class="brand-card"><img src="{{{{logo}}}}" alt="Logo de la escuela"></div><nav class="side-nav">{nav_link('/', '⌂', 'Inicio')}{nav_link('/students','♟','Alumnos')}{nav_link('/subjects','▤','Asignaturas')}{nav_link('/activities','▥','Actividades y calificaciones')}{nav_link('/attendance','✓','Asistencia')}{nav_link('/incidents','!','Incidencias')}{nav_link('/config','⚙','Configuración')}<a class="nav-link logout" href="/logout"><span class="nav-icon">↪</span><span>Cerrar sesión</span></a></nav><div class="sidebar-art"><div class="sidebar-wave"></div></div></aside>'''
+        current = request.path
+        def mobile_item(href, icon, label):
+            active = current == href or (href != '/' and current.startswith(href))
+            return f'<a class="{"active" if active else ""}" href="{href}"><i>{icon}</i><span>{label}</span></a>'
+        mobile_nav = ''.join([
+            mobile_item('/', '⌂', 'Inicio'), mobile_item('/students', '♟', 'Alumnos'),
+            mobile_item('/attendance', '✓', 'Asistencia'), mobile_item('/activities', '▥', 'Calificar'),
+            mobile_item('/config', '•••', 'Más')
+        ])
+        tpl += f'''<div class="app-shell">{nav}<div class="overlay" id="overlay" onclick="toggleSidebar()"></div><section class="main-area"><header class="topbar"><div class="title-block"><button class="drawer-toggle" type="button" onclick="toggleSidebar()">☰</button><div class="mini-mark">▤</div><div class="title-copy"><strong>SISTEMA INTEGRAL ESCOLAR</strong><small>{{{{c.school}}}}</small></div></div><div class="top-meta"><div class="cycle">▣ <span>Ciclo Escolar {{{{c.cycle}}}}</span>⌄</div><div class="bell">♢</div><div class="admin-box"><div class="avatar">A</div><div class="admin-copy"><b>Administrador</b><small>Rol: Administrador</small></div></div></div></header><div class="mobile-top"><span>☰</span><b>Sistema Escolar</b><span>♢</span></div><div class="mobile-brand"><img src="{{{{logo}}}}" alt="Logo de la escuela"></div><main class="wrap">{{% with ms=get_flashed_messages() %}}{{% for m in ms %}}<div class="alert">{{{{m}}}}</div>{{% endfor %}}{{% endwith %}}{body}<footer class="footer"><span><strong>▣</strong> Sistema Integral Escolar &nbsp; • &nbsp; {{{{c.school}}}} &nbsp; • &nbsp; Beristain, Ahuazotepec, Puebla</span><span>© 2026 Todos los derechos reservados.</span></footer></main></section><nav class="bottom-nav">{mobile_nav}</nav></div><script>function toggleSidebar(){{document.getElementById('sidebar').classList.toggle('open');document.getElementById('overlay').classList.toggle('open')}}</script>'''
     else:
-        tpl += '''<div class="login-layout"><section class="login-brand"><img src="/static/logo.webp" alt="Logo Telesecundaria Benito Juárez"><h2>{{c.school}}</h2><p>Ciclo escolar {{c.cycle}}</p></section><section class="login-pane"><div style="width:min(470px,100%)">{% with ms=get_flashed_messages() %}{% for m in ms %}<div class="alert">{{m}}</div>{% endfor %}{% endwith %}''' + body + '''</div></section></div>'''
+        tpl += f'''<div class="login-layout"><section class="login-brand"><div class="login-logo-box"><img src="{{{{logo}}}}" alt="Logo de la escuela"></div></section><section class="login-pane"><div class="login-pane-inner">{{% with ms=get_flashed_messages() %}}{{% for m in ms %}}<div class="alert">{{{{m}}}}</div>{{% endfor %}}{{% endwith %}}{body}</div></section></div>'''
+
     tpl += '</body></html>'
-    return render_template_string(tpl, title=title, c=c)
+    return render_template_string(tpl, title=title, c=c, logo=LOGO_DATA)
 
 
 core.page = page
 
 
 def dashboard():
-    r = core.require()
-    if r: return r
+    redirect_response = core.require()
+    if redirect_response:
+        return redirect_response
+
     students = core.Student.query.filter_by(status='ACTIVO').all()
-    av = [core.avg_student(s.id) for s in students]
-    av = [x for x in av if x is not None]
-    total = core.Attendance.query.count()
-    present = core.Attendance.query.filter(core.Attendance.state.in_(['PRESENTE','RETARDO'])).count()
-    att = round(present*100/total,1) if total else 0
-    avg = round(sum(av)/len(av),2) if av else '—'
-    inc = core.Incident.query.filter_by(status='ABIERTA').count()
     subjects = core.Subject.query.count()
     activities = core.Activity.query.count()
-    body = f'''<section class="hero"><div class="hero-main"><div><div class="muted">PANEL INSTITUCIONAL</div><h1>¡Bienvenido, Administrador!</h1><p>Gestiona evaluación, asistencia y convivencia escolar desde un mismo espacio organizado y fácil de consultar.</p></div><img class="hero-logo" src="/static/logo.webp" alt="Logo"></div><div class="quote"><strong>“La educación es el arma más poderosa que puedes usar para cambiar el mundo.”</strong><small>— Nelson Mandela</small></div></section>
-    <div class="grid"><div class="card kpi-card"><div class="kpi-icon">♟</div><div class="muted">Alumnos activos</div><div class="kpi">{len(students)}</div></div><div class="card kpi-card"><div class="kpi-icon">★</div><div class="muted">Promedio general</div><div class="kpi">{avg}</div></div><div class="card kpi-card"><div class="kpi-icon">✓</div><div class="muted">Asistencia acumulada</div><div class="kpi">{att}%</div></div><div class="card kpi-card"><div class="kpi-icon">!</div><div class="muted">Incidencias abiertas</div><div class="kpi">{inc}</div></div></div>
-    <div class="card"><h2>Acciones rápidas</h2><div class="quick"><a href="/students"><i>＋</i>Nuevo alumno</a><a href="/attendance"><i>✓</i>Registrar asistencia</a><a href="/activities"><i>✎</i>Nueva actividad</a><a href="/incidents"><i>!</i>Nueva incidencia</a><a href="/subjects"><i>▤</i>Asignaturas</a><a href="/config"><i>⚙</i>Configuración</a></div></div>
-    <div class="grid"><div class="card"><h2>Resumen académico</h2><p class="muted">Asignaturas registradas</p><div class="kpi">{subjects}</div></div><div class="card"><h2>Evaluación</h2><p class="muted">Actividades creadas</p><div class="kpi">{activities}</div></div><div class="card"><h2>Estado del sistema</h2><p style="color:var(--ok);font-weight:800">● Base de datos conectada</p><p class="muted">El sistema continúa utilizando la base de datos configurada en producción.</p></div></div>'''
+    open_incidents = core.Incident.query.filter_by(status='ABIERTA').count()
+    total_att = core.Attendance.query.count()
+    present_att = core.Attendance.query.filter(core.Attendance.state.in_(['PRESENTE', 'RETARDO'])).count()
+    attendance_pct = round(present_att * 100 / total_att, 1) if total_att else 0
+    days, values = attendance_series()
+
+    upcoming = core.Activity.query.filter(core.Activity.activity_date >= date.today()).order_by(core.Activity.activity_date).limit(3).all()
+    events = ''.join(f'<div class="event"><span class="event-dot"></span><div><b>{a.name}</b><small>{a.activity_date.strftime("%d/%m/%Y")} · {a.subject.name if a.subject else "Actividad"}</small></div></div>' for a in upcoming)
+    if not events:
+        events = '<div class="muted" style="padding:8px 0">No hay eventos próximos registrados.</div>'
+
+    recent = []
+    last_activity = core.Activity.query.order_by(core.Activity.activity_date.desc()).first()
+    last_attendance = core.Attendance.query.order_by(core.Attendance.day.desc()).first()
+    last_incident = core.Incident.query.order_by(core.Incident.day.desc()).first()
+    if last_activity:
+        recent.append(('▥', 'Actividad registrada', last_activity.name, last_activity.activity_date.strftime('%d/%m')))
+    if last_attendance:
+        recent.append(('✓', 'Asistencia registrada', last_attendance.day.strftime('%d/%m/%Y'), ''))
+    if last_incident:
+        recent.append(('!', 'Incidencia registrada', last_incident.student.full_name if last_incident.student else last_incident.category, last_incident.day.strftime('%d/%m')))
+    recent_html = ''.join(f'<div class="recent-item"><span class="recent-badge">{icon}</span><div><b>{label}</b><br><small>{detail}</small></div><span class="recent-time">{when}</span></div>' for icon, label, detail, when in recent) or '<div class="muted" style="padding:20px 0">Aún no hay actividad reciente.</div>'
+
+    body = f'''<div class="dashboard-grid"><section class="dashboard-main"><section class="panel hero-panel"><div class="hero-copy"><h1>¡Bienvenido, Administrador!</h1><span class="hero-rule"></span><p>Gestiona y administra toda la información escolar de manera segura, rápida y eficiente.</p></div><div class="hero-brand"><img src="{{{{logo}}}}" alt="Benito Juárez"><div><div class="quote-mark">“</div><div class="quote-text">Entre los individuos, como entre las naciones, el respeto al derecho ajeno es la paz.</div><div class="quote-author">Benito Juárez</div></div></div></section><section class="stats"><div class="stat-card"><span class="stat-icon">♟</span><div><div class="stat-label">Alumnos</div><div class="kpi">{len(students)}</div><div class="stat-sub">Activos</div></div></div><div class="stat-card"><span class="stat-icon gold">▤</span><div><div class="stat-label">Asignaturas</div><div class="kpi">{subjects}</div><div class="stat-sub gold">Registradas</div></div></div><div class="stat-card"><span class="stat-icon">▥</span><div><div class="stat-label">Actividades</div><div class="kpi">{activities}</div><div class="stat-sub">Creadas</div></div></div><div class="stat-card"><span class="stat-icon gold">!</span><div><div class="stat-label">Incidencias</div><div class="kpi">{open_incidents}</div><div class="stat-sub gold">Abiertas</div></div></div></section><section class="panel quick-panel"><h2>Acciones rápidas</h2><div class="quick"><a href="/students"><span class="quick-icon">♟＋</span><span>Nuevo alumno</span></a><a href="/attendance"><span class="quick-icon">✓</span><span>Registrar asistencia</span></a><a href="/incidents"><span class="quick-icon">!</span><span>Nueva incidencia</span></a><a href="/activities"><span class="quick-icon">☆</span><span>Capturar calificaciones</span></a><a href="/subjects"><span class="quick-icon">▤</span><span>Asignaturas</span></a><a href="/config"><span class="quick-icon">➤</span><span>Configuración</span></a></div></section><section class="analytics-row"><div class="panel analytics-card"><div class="analytics-head"><h2>Resumen de asistencias <span class="muted">(últimos registros)</span></h2></div>{line_chart(days, values)}</div><div class="panel analytics-card"><h2>Asistencia promedio</h2><div class="ring-wrap"><div class="ring" style="--pct:{attendance_pct}%"><div class="ring-copy"><b>{attendance_pct}%</b><span>Asistencia<br>promedio</span></div></div><div class="trend">↑<small>seguimiento<br>acumulado</small></div></div></div></section><section class="panel"><div class="analytics-head"><h2>Actividad reciente</h2></div><div class="recent-list">{recent_html}</div></section></section><aside class="right-rail"><section class="panel calendar-card"><div class="calendar-title">▣ <span>Calendario escolar</span></div>{calendar_widget()}</section><section class="panel"><div class="analytics-head"><h2>Eventos próximos</h2><span class="muted">Ver todos</span></div>{events}</section></aside></div>'''
     return page('Inicio', body)
 
 
