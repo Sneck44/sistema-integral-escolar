@@ -4,18 +4,19 @@ from datetime import date, timedelta
 from flask import Response, request
 
 import ui_app_base as ui
-from logo_jpeg_data import LOGO_JPEG_B64
+from logo_png_data import LOGO_PNG_B64
 
 app = ui.app
 
-# Safari/iPhone-safe school logo. Replaces the previous broken WebP response.
+# Logo PNG real, optimizado y compatible con Safari/iPhone.
 def school_logo_fixed():
     return Response(
-        base64.b64decode(LOGO_JPEG_B64),
-        mimetype='image/jpeg',
+        base64.b64decode(LOGO_PNG_B64),
+        mimetype='image/png',
         headers={
-            'Cache-Control': 'public, max-age=604800, immutable',
-            'Content-Disposition': 'inline; filename="logo-benito-juarez.jpg"',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma': 'no-cache',
+            'Content-Disposition': 'inline; filename="logo-benito-juarez.png"',
             'X-Content-Type-Options': 'nosniff',
         },
     )
