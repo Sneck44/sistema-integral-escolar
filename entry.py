@@ -73,6 +73,10 @@ install_diagnostic(app)
 from excel_exports import install as install_excel_exports
 install_excel_exports(app)
 
+# Corrección de compatibilidad de XlsxWriter para el área de impresión.
+from excel_runtime_fix import install as install_excel_runtime_fix
+install_excel_runtime_fix()
+
 # Gestión completa de actividades: crear, editar y borrar con protección de datos asociados.
 from activity_manager import install as install_activity_manager
 install_activity_manager(app)
