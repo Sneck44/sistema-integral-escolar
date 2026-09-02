@@ -91,3 +91,7 @@ install_trimester_charts(app)
 # Sistema final de iconos: reemplaza símbolos/emojis por una familia SVG lineal uniforme.
 from icon_system import install as install_icon_system
 install_icon_system(app)
+
+# Animación elegante y discreta del logotipo en la pantalla de inicio de sesión.
+from login_animation import install as install_login_animation
+install_login_animation(app)
