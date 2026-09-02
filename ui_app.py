@@ -1,13 +1,25 @@
 import calendar as cal
+import os
 from datetime import date, timedelta
-from flask import request
+from flask import request, send_file
 
 import ui_app_base as ui
 
 app = ui.app
 
-# Logo institucional servido directamente como archivo estático por Vercel/Flask.
-STATIC_LOGO = '/static/logo-school.jpeg?v=20260901-final'
+# Ruta interna estable: Flask entrega el JPEG original incluido en el proyecto.
+STATIC_LOGO = '/school-logo-final?v=20260902'
+
+@app.route('/school-logo-final')
+def school_logo_final():
+    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo-school.jpeg')
+    return send_file(
+        logo_path,
+        mimetype='image/jpeg',
+        conditional=True,
+        max_age=0,
+        download_name='logo-telesecundaria-benito-juarez.jpeg'
+    )
 
 MONTHS = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
           'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -60,8 +72,10 @@ def month_from_request():
         except (ValueError, TypeError):
             pass
     today = date.today()
-    if today < date(2026, 8, 1): return 2026, 8
-    if today > date(2027, 7, 31): return 2027, 7
+    if today < date(2026, 8, 1):
+        return 2026, 8
+    if today > date(2027, 7, 31):
+        return 2027, 7
     return today.year, today.month
 
 def shift_month(y, m, delta):
@@ -93,7 +107,8 @@ def calendar_widget():
                 for kind, label in events:
                     key = (label, kind)
                     if key not in seen:
-                        month_events.append((d, kind, label)); seen.add(key)
+                        month_events.append((d, kind, label))
+                        seen.add(key)
             if d == today:
                 style += 'outline:2px solid #211b1d;outline-offset:2px;'
             cells += f'<span class="cal-day" style="{style}" title="{title}">{day_num}</span>'
@@ -108,21 +123,21 @@ def calendar_widget():
         details = '<div class="muted" style="font-size:10px;padding-top:6px">Sin fechas SEP destacadas este mes.</div>'
     return f'''<div class="calendar-head"><a class="ghost-btn" href="{prev_href}" style="display:grid;place-items:center;text-decoration:none">‹</a><strong>{MONTHS[m]} {y}</strong><a class="ghost-btn" href="{next_href}" style="display:grid;place-items:center;text-decoration:none">›</a></div><div class="cal-week"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div><div class="cal-grid">{cells}</div><div style="border-top:1px solid #eee8e6;margin-top:10px;padding-top:8px">{legend}</div><div style="border-top:1px solid #f1ecea;margin-top:7px;padding-top:7px"><b style="font-size:11px;color:#7b1024">Fechas SEP del mes</b>{details}</div>'''
 
-# Reemplazar el calendario del dashboard base.
 ui.calendar_widget = calendar_widget
 
-# Reutilizamos toda la interfaz base, pero cambiamos cada referencia antigua del logo
-# por el archivo estático real que acaba de ser agregado al repositorio.
+# Esta es la corrección clave: todas las pantallas, incluido el dashboard,
+# deben pasar por la misma función page() para sustituir la referencia vieja.
 _original_page = ui.page
 
 def page(title, body):
     body = body.replace('/school-logo?v=20260901', STATIC_LOGO)
+    body = body.replace('/static/logo-school.jpeg?v=20260901-final', STATIC_LOGO)
     response = _original_page(title, body)
     if isinstance(response, str):
         response = response.replace('/school-logo?v=20260901', STATIC_LOGO)
+        response = response.replace('/static/logo-school.jpeg?v=20260901-final', STATIC_LOGO)
     return response
 
+ui.page = page
 ui.core.page = page
-
-# El dashboard base se conserva, incluyendo responsive y datos reales.
 app.view_functions['dashboard'] = ui.dashboard
