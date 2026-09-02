@@ -32,5 +32,7 @@ def apple_touch_icon():
 
 
 app.view_functions['school_logo'] = school_logo_exact
-app.add_url_rule('/apple-touch-icon.jpg', 'apple_touch_icon', apple_touch_icon)
+app.add_url_rule('/apple-touch-icon.jpg', 'apple_touch_icon_jpg', apple_touch_icon)
+app.add_url_rule('/apple-touch-icon.png', 'apple_touch_icon_png', apple_touch_icon)
+app.add_url_rule('/apple-touch-icon-precomposed.png', 'apple_touch_icon_precomposed', apple_touch_icon)
 ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
