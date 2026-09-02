@@ -105,6 +105,10 @@ install_data_manager(app)
 from trimester_charts import install as install_trimester_charts
 install_trimester_charts(app)
 
+# Las exportaciones también muestran el grado y grupo del entorno activo.
+from group_export_fix import install as install_group_export_fix
+install_group_export_fix()
+
 # Sistema final de iconos: reemplaza símbolos/emojis por una familia SVG lineal uniforme.
 from icon_system import install as install_icon_system
 install_icon_system(app)
