@@ -69,3 +69,7 @@ install_student_details(app)
 # Rúbricas profesionales asistidas por IA y calificación por criterio.
 from rubric_ai import install as install_rubric_ai
 install_rubric_ai(app)
+
+# Herramienta para preparar los teléfonos de tutores y facilitar la creación del grupo de WhatsApp.
+from whatsapp_group import install as install_whatsapp_group
+install_whatsapp_group(app)
