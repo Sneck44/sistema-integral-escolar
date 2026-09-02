@@ -61,6 +61,11 @@ install_multi_user(app)
 from student_details import install as install_student_details
 install_student_details(app)
 
+# Se instala antes de Rúbricas IA para que su after_request normalice el acceso
+# después de que el módulo de rúbricas inserte sus elementos en el dashboard.
+from ui_polish import install as install_ui_polish
+install_ui_polish(app)
+
 from rubric_ai import install as install_rubric_ai
 install_rubric_ai(app)
 
