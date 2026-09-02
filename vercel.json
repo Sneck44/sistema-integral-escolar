@@ -1,11 +1,9 @@
 {
   "version": 2,
   "builds": [
-    {"src": "ui_app.py", "use": "@vercel/python"},
-    {"src": "static/**", "use": "@vercel/static"}
+    {"src": "entry.py", "use": "@vercel/python"}
   ],
   "routes": [
-    {"src": "/static/(.*)", "dest": "/static/$1"},
-    {"src": "/(.*)", "dest": "ui_app.py"}
+    {"src": "/(.*)", "dest": "entry.py"}
   ]
 }
