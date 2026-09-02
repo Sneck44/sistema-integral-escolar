@@ -58,6 +58,10 @@ ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 from multi_user import install as install_multi_user
 install_multi_user(app)
 
+# Cada docente puede modificar únicamente el grupo que el administrador le asigne.
+from teacher_group_permissions import install as install_teacher_group_permissions
+install_teacher_group_permissions(app)
+
 from student_details import install as install_student_details
 install_student_details(app)
 
