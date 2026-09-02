@@ -1,5 +1,8 @@
-# Sistema Integral Escolar 2026–2027
+# Sistema Integral Escolar
 
-Aplicación web para evaluación, asistencia, seguimiento académico y convivencia escolar.
+Aplicación web para gestión escolar de la Telesecundaria Benito Juárez.
 
-Proyecto preparado para despliegue web. No cargar datos reales de estudiantes hasta configurar base de datos persistente, secretos y controles de acceso.
+## Última actualización
+- Logo institucional servido directamente desde `static/logo-school.jpeg`.
+- Interfaz responsive para escritorio, tableta e iPhone.
+- Calendario SEP 2026-2027 integrado en el panel.
