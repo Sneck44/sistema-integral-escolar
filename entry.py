@@ -73,3 +73,11 @@ install_rubric_ai(app)
 # Herramienta para preparar los teléfonos de tutores y facilitar la creación del grupo de WhatsApp.
 from whatsapp_group import install as install_whatsapp_group
 install_whatsapp_group(app)
+
+# Diagnóstico académico: calificación, ritmos, estilos, canales, fortalezas y necesidades.
+from diagnostic import install as install_diagnostic
+install_diagnostic(app)
+
+# Centro de exportación a Excel con formato carta y encabezado institucional.
+from excel_exports import install as install_excel_exports
+install_excel_exports(app)
