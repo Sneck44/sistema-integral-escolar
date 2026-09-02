@@ -1,3 +1,4 @@
+import os
 from io import BytesIO
 from html import escape
 from flask import session, redirect, send_file
@@ -39,7 +40,7 @@ def _formats(wb):
 def _setup(ws, title, cols, landscape=True):
     f = ws.book_formats
     last = max(0, cols - 1)
-    ws.set_paper(1)  # Carta / Letter
+    ws.set_paper(1)
     if landscape:
         ws.set_landscape()
     else:
@@ -52,6 +53,14 @@ def _setup(ws, title, cols, landscape=True):
     ws.merge_range(0, min(3, last), 0, last, HEADER_LINES[0], f['inst'])
     for i, line in enumerate(HEADER_LINES[1:], start=1):
         ws.merge_range(i, 0, i, last, line, f['inst'])
+
+    logo = os.path.join(os.path.dirname(__file__), 'static', 'logo-benito-juarez-final.PNG')
+    if os.path.exists(logo) and last >= 2:
+        try:
+            ws.insert_image(0, last, logo, {'x_scale': 0.20, 'y_scale': 0.20, 'x_offset': 5, 'y_offset': 3, 'object_position': 1})
+        except Exception:
+            pass
+
     ws.merge_range(8, 0, 8, last, title, f['title'])
     c = core.cfg()
     ws.merge_range(9, 0, 9, last, f'GRADO: {c.grade}    GRUPO: {c.group}    CICLO: {c.cycle}', f['meta'])
