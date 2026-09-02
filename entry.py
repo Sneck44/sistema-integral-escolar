@@ -62,6 +62,10 @@ install_multi_user(app)
 from teacher_group_permissions import install as install_teacher_group_permissions
 install_teacher_group_permissions(app)
 
+# Gestión administrativa de solicitudes pendientes: rechazar, restaurar o eliminar.
+from request_actions import install as install_request_actions
+install_request_actions(app)
+
 from student_details import install as install_student_details
 install_student_details(app)
 
