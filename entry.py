@@ -29,13 +29,11 @@ def apple_touch_icon_exact():
     )
 
 
-# Rutas exactas para el logo institucional y el icono de iPhone.
 app.view_functions['school_logo'] = school_logo_exact
 app.add_url_rule('/apple-touch-icon.png', 'apple_touch_icon_png_exact', apple_touch_icon_exact)
 app.add_url_rule('/apple-touch-icon-precomposed.png', 'apple_touch_icon_precomposed_exact', apple_touch_icon_exact)
 app.add_url_rule('/favicon.png', 'favicon_png_exact', apple_touch_icon_exact)
 
-# Fuerza a Safari/iOS a reconocer el icono subido por el usuario en todas las páginas.
 @app.after_request
 def add_ios_app_icon(response):
     content_type = response.headers.get('Content-Type', '')
@@ -55,29 +53,26 @@ def add_ios_app_icon(response):
             response.headers['Content-Length'] = str(len(response.get_data()))
     return response
 
-# El logo horizontal del sistema sigue usando el archivo institucional definitivo.
 ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 
-# Módulo multiusuario: registro, aprobación, roles y gestión de cuentas.
 from multi_user import install as install_multi_user
 install_multi_user(app)
 
-# Expediente ampliado del alumno: peso, estatura, tallas y edición posterior.
 from student_details import install as install_student_details
 install_student_details(app)
 
-# Rúbricas profesionales asistidas por IA y calificación por criterio.
 from rubric_ai import install as install_rubric_ai
 install_rubric_ai(app)
 
-# Herramienta para preparar los teléfonos de tutores y facilitar la creación del grupo de WhatsApp.
 from whatsapp_group import install as install_whatsapp_group
 install_whatsapp_group(app)
 
-# Diagnóstico académico: calificación, ritmos, estilos, canales, fortalezas y necesidades.
 from diagnostic import install as install_diagnostic
 install_diagnostic(app)
 
-# Centro de exportación a Excel con formato carta y encabezado institucional.
 from excel_exports import install as install_excel_exports
 install_excel_exports(app)
+
+# Gestión completa de actividades: crear, editar y borrar con protección de datos asociados.
+from activity_manager import install as install_activity_manager
+install_activity_manager(app)
