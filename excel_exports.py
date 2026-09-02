@@ -17,6 +17,10 @@ HEADER_LINES = [
     'CICLO ESCOLAR 2026-2027',
 ]
 
+BASE_DIR = os.path.dirname(__file__)
+PUEBLA_LOGOS = os.path.join(BASE_DIR, 'static', 'encabezado-logos-puebla.png')
+TELESEC_LOGO = os.path.join(BASE_DIR, 'static', 'encabezado-logo-telesecundaria.jpeg')
+
 
 def _book():
     output = BytesIO()
@@ -26,14 +30,24 @@ def _book():
 
 def _formats(wb):
     return {
-        'inst': wb.add_format({'bold': True, 'font_size': 9, 'align': 'center', 'valign': 'vcenter'}),
-        'brand': wb.add_format({'bold': True, 'font_size': 10, 'font_color': '#7B1024', 'align': 'center', 'valign': 'vcenter'}),
+        'inst': wb.add_format({'bold': True, 'font_size': 8, 'align': 'center', 'valign': 'vcenter'}),
         'title': wb.add_format({'bold': True, 'font_size': 14, 'font_color': '#7B1024', 'align': 'center', 'valign': 'vcenter'}),
-        'meta': wb.add_format({'font_size': 9, 'align': 'center'}),
+        'meta': wb.add_format({'font_size': 9, 'bold': True, 'align': 'center', 'valign': 'vcenter'}),
         'head': wb.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#7B1024', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True}),
+        'subhead': wb.add_format({'bold': True, 'bg_color': '#EAD9DE', 'font_color': '#5A0C1B', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True}),
         'cell': wb.add_format({'border': 1, 'valign': 'top', 'text_wrap': True, 'font_size': 9}),
         'center': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 9}),
-        'score': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': '0.0'}),
+        'score': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': '0.0', 'font_size': 9}),
+        'pct': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': '0.0"%"', 'font_size': 9}),
+        'present': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#D9EAD3', 'font_color': '#245B20', 'bold': True}),
+        'absence': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#F4CCCC', 'font_color': '#8A1C1C', 'bold': True}),
+        'late': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#FCE5CD', 'font_color': '#8A4B08', 'bold': True}),
+        'justified': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#D9EAF7', 'font_color': '#174A78', 'bold': True}),
+        'legend': wb.add_format({'font_size': 8, 'italic': True, 'align': 'left'}),
+        'summary_label': wb.add_format({'bold': True, 'bg_color': '#F2F2F2', 'border': 1, 'align': 'right'}),
+        'summary_value': wb.add_format({'bold': True, 'border': 1, 'align': 'center'}),
+        'signature': wb.add_format({'bold': True, 'font_size': 9, 'align': 'center', 'valign': 'top'}),
+        'signature_name': wb.add_format({'bold': True, 'font_size': 9, 'align': 'center', 'valign': 'top', 'top': 1}),
     }
 
 
@@ -41,36 +55,60 @@ def _setup(ws, title, cols, landscape=True):
     f = ws.book_formats
     last = max(0, cols - 1)
     ws.set_paper(1)
-    if landscape:
-        ws.set_landscape()
-    else:
-        ws.set_portrait()
+    ws.set_landscape() if landscape else ws.set_portrait()
     ws.fit_to_pages(1, 0)
-    ws.set_margins(0.28, 0.28, 0.35, 0.35)
-    ws.repeat_rows(0, 10)
+    ws.set_margins(0.28, 0.28, 0.30, 0.30)
     ws.hide_gridlines(2)
-    ws.merge_range(0, 0, 0, min(2, last), 'PUEBLA · Educación · Pensar en Grande · Por Amor a Puebla', f['brand'])
-    ws.merge_range(0, min(3, last), 0, last, HEADER_LINES[0], f['inst'])
-    for i, line in enumerate(HEADER_LINES[1:], start=1):
-        ws.merge_range(i, 0, i, last, line, f['inst'])
+    ws.set_row(0, 34)
+    ws.set_row(1, 18)
+    ws.set_row(2, 18)
+    ws.set_row(3, 18)
+    ws.set_row(4, 18)
+    ws.set_row(5, 18)
+    ws.set_row(6, 18)
+    try:
+        if os.path.exists(PUEBLA_LOGOS):
+            ws.insert_image(0, 0, PUEBLA_LOGOS, {'x_scale': 0.43, 'y_scale': 0.43, 'x_offset': 3, 'y_offset': 2, 'object_position': 1})
+        if os.path.exists(TELESEC_LOGO):
+            ws.insert_image(0, max(0, last - 1), TELESEC_LOGO, {'x_scale': 0.48, 'y_scale': 0.48, 'x_offset': 3, 'y_offset': 2, 'object_position': 1})
+    except Exception:
+        pass
 
-    logo = os.path.join(os.path.dirname(__file__), 'static', 'logo-benito-juarez-final.PNG')
-    if os.path.exists(logo) and last >= 2:
-        try:
-            ws.insert_image(0, last, logo, {'x_scale': 0.20, 'y_scale': 0.20, 'x_offset': 5, 'y_offset': 3, 'object_position': 1})
-        except Exception:
-            pass
+    center_start = min(3, last)
+    center_end = max(center_start, last - 2)
+    for i, line in enumerate(HEADER_LINES):
+        ws.merge_range(i, center_start, i, center_end, line, f['inst'])
 
     ws.merge_range(8, 0, 8, last, title, f['title'])
     c = core.cfg()
-    ws.merge_range(9, 0, 9, last, f'GRADO: {c.grade}    GRUPO: {c.group}    CICLO: {c.cycle}', f['meta'])
+    ws.merge_range(9, 0, 9, last, f'GRADO: {c.grade}     GRUPO: {c.group}     CICLO ESCOLAR: {c.cycle}', f['meta'])
     ws.set_row(8, 24)
+    ws.repeat_rows(0, 11)
+
+
+def _add_signatures(ws, last_data_row, cols):
+    f = ws.book_formats
+    last = max(1, cols - 1)
+    sig_row = last_data_row + 4
+    left_end = max(1, last // 2 - 1)
+    right_start = min(last, last // 2 + 1)
+
+    ws.merge_range(sig_row, 0, sig_row, left_end, '________________________________________', f['signature'])
+    ws.merge_range(sig_row + 1, 0, sig_row + 1, left_end, 'NOMBRE Y FIRMA DEL DOCENTE', f['signature'])
+    ws.merge_range(sig_row, right_start, sig_row, last, '________________________________________', f['signature'])
+    ws.merge_range(sig_row + 1, right_start, sig_row + 1, last, 'Vo. Bo. DIRECTORA', f['signature'])
+    ws.merge_range(sig_row + 2, right_start, sig_row + 2, last, 'MTRA. NELLY AZUCENA HERNÁNDEZ PICAZO', f['signature_name'])
+    ws.set_row(sig_row, 24)
+    ws.set_row(sig_row + 1, 18)
+    ws.set_row(sig_row + 2, 18)
+    ws.set_print_area(0, 0, sig_row + 2, last)
 
 
 def _write_table(ws, headers, rows, widths=None, start=11):
     f = ws.book_formats
     for col, h in enumerate(headers):
         ws.write(start, col, h, f['head'])
+    ws.set_row(start, 30)
     for r_idx, row in enumerate(rows, start=start + 1):
         for c_idx, value in enumerate(row):
             fmt = f['center'] if c_idx == 0 else f['cell']
@@ -80,8 +118,11 @@ def _write_table(ws, headers, rows, widths=None, start=11):
     if widths:
         for i, width in enumerate(widths):
             ws.set_column(i, i, width)
-    ws.autofilter(start, 0, max(start + 1, start + len(rows)), len(headers) - 1)
-    ws.freeze_panes(start + 1, 0)
+    last_data = start + max(1, len(rows))
+    ws.autofilter(start, 0, last_data, len(headers) - 1)
+    ws.freeze_panes(start + 1, 2 if len(headers) > 6 else 0)
+    _add_signatures(ws, last_data, len(headers))
+    return last_data
 
 
 def _add_sheet(wb, name, title, headers, rows, widths=None, landscape=True):
@@ -138,13 +179,85 @@ def _grades_rows():
     return rows
 
 
-def _attendance_rows():
-    students = {s.id: s for s in core.Student.query.all()}
+def _attendance_matrix():
+    students = core.Student.query.filter_by(status='ACTIVO').order_by(core.Student.list_no, core.Student.paternal).all()
+    records = core.Attendance.query.order_by(core.Attendance.day, core.Attendance.student_id).all()
+    days = sorted({a.day for a in records if a.day})
+    by_key = {(a.student_id, a.day): (a.state or '').upper() for a in records}
+
+    headers = ['No.', 'Alumno'] + [d.strftime('%d/%m') for d in days] + ['P', 'F', 'R', 'J', '% ASIST.']
     rows = []
-    for a in core.Attendance.query.order_by(core.Attendance.day, core.Attendance.student_id).all():
-        s = students.get(a.student_id)
-        rows.append([a.day.strftime('%d/%m/%Y') if a.day else '', s.list_no if s else '', s.full_name if s else '', a.state, a.notes or ''])
-    return rows
+    for s in students:
+        states = []
+        p = f = r = j = 0
+        for d in days:
+            state = by_key.get((s.id, d), '')
+            if state in ('PRESENTE', 'P'):
+                code = 'P'; p += 1
+            elif state in ('RETARDO', 'R'):
+                code = 'R'; r += 1
+            elif state in ('JUSTIFICADA', 'JUSTIFICADO', 'J'):
+                code = 'J'; j += 1
+            elif state in ('FALTA', 'AUSENTE', 'F'):
+                code = 'F'; f += 1
+            elif state:
+                code = state[:1]
+            else:
+                code = ''
+            states.append(code)
+        considered = p + f + r + j
+        pct = round(((p + r + j) / considered) * 100, 1) if considered else ''
+        rows.append([s.list_no or '', s.full_name] + states + [p, f, r, j, pct])
+    return headers, rows, days
+
+
+def _add_attendance_sheet(wb):
+    headers, rows, days = _attendance_matrix()
+    ws = wb.add_worksheet('Asistencia')
+    ws.book_formats = _formats(wb)
+    _setup(ws, 'CONCENTRADO DE ASISTENCIA DEL GRUPO', len(headers), True)
+    f = ws.book_formats
+    start = 12
+    ws.merge_range(10, 0, 10, len(headers)-1, 'CLAVES: P = Presente   F = Falta   R = Retardo   J = Justificada', f['legend'])
+    for col, h in enumerate(headers):
+        ws.write(start, col, h, f['head'])
+    ws.set_row(start, 32)
+
+    day_count = len(days)
+    for r_idx, row in enumerate(rows, start=start + 1):
+        for c_idx, value in enumerate(row):
+            if c_idx == 0:
+                fmt = f['center']
+            elif 2 <= c_idx < 2 + day_count:
+                fmt = {'P': f['present'], 'F': f['absence'], 'R': f['late'], 'J': f['justified']}.get(value, f['center'])
+            elif c_idx == len(headers) - 1:
+                fmt = f['pct']
+            else:
+                fmt = f['center'] if c_idx >= 2 + day_count else f['cell']
+            ws.write(r_idx, c_idx, value, fmt)
+
+    ws.set_column(0, 0, 5)
+    ws.set_column(1, 1, 28)
+    if day_count:
+        ws.set_column(2, 1 + day_count, 5)
+    ws.set_column(2 + day_count, len(headers)-1, 8)
+    ws.freeze_panes(start + 1, 2)
+
+    last_data = start + max(1, len(rows))
+    summary_row = last_data + 2
+    total_students = len(rows)
+    total_marks = sum((r[-5] + r[-4] + r[-3] + r[-2]) for r in rows) if rows else 0
+    total_present = sum(r[-5] for r in rows) if rows else 0
+    total_late = sum(r[-3] for r in rows) if rows else 0
+    total_just = sum(r[-2] for r in rows) if rows else 0
+    group_pct = round(((total_present + total_late + total_just) / total_marks) * 100, 1) if total_marks else 0
+    ws.merge_range(summary_row, 0, summary_row, 1, 'RESUMEN DEL GRUPO', f['subhead'])
+    ws.write(summary_row + 1, 0, 'Alumnos activos', f['summary_label']); ws.write(summary_row + 1, 1, total_students, f['summary_value'])
+    ws.write(summary_row + 2, 0, '% asistencia grupal', f['summary_label']); ws.write(summary_row + 2, 1, group_pct, f['pct'])
+    if rows:
+        ws.conditional_format(start + 1, len(headers)-1, last_data, len(headers)-1, {'type': '3_color_scale', 'min_color': '#F4CCCC', 'mid_color': '#FFF2CC', 'max_color': '#D9EAD3'})
+    _add_signatures(ws, summary_row + 2, len(headers))
+    return ws
 
 
 def _incident_rows():
@@ -172,20 +285,16 @@ def _rubric_rows():
 def _make_workbook(section='all'):
     wb, output = _book()
 
-    def add_students():
+    if section in ('all', 'students'):
         _add_sheet(wb, 'Alumnos', 'EXPEDIENTE GENERAL DE ALUMNOS', ['No.', 'Alumno', 'Estado', 'Tutor', 'Teléfono', 'Peso kg', 'Estatura cm', 'Playera/Blusa', 'Pantalón/Falda', 'Suéter/Chamarra', 'Calzado', 'Observaciones'], _students_rows(), [6, 28, 10, 24, 14, 10, 11, 13, 13, 15, 10, 32])
-
-    def add_diagnostic():
+    if section in ('all', 'diagnostic'):
         _add_sheet(wb, 'Diagnóstico', 'DIAGNÓSTICO DEL GRUPO', ['No.', 'Alumno', 'Calificación', 'Ritmo', 'Estilo de aprendizaje', 'Canal de percepción', 'Nivel', 'Fortalezas', 'Necesidades de apoyo', 'Observaciones'], _diagnostic_rows(), [6, 28, 11, 14, 18, 20, 16, 30, 30, 30])
-
-    if section in ('all', 'students'): add_students()
-    if section in ('all', 'diagnostic'): add_diagnostic()
     if section in ('all', 'activities'):
-        _add_sheet(wb, 'Actividades', 'REGISTRO DE ACTIVIDADES', ['Fecha', 'Actividad', 'Asignatura', 'Trimestre', 'Puntaje máximo'], _activities_rows(), [12, 35, 24, 22, 14])
+        _add_sheet(wb, 'Actividades', 'REGISTRO DE ACTIVIDADES', ['Fecha', 'Actividad', 'Asignatura', 'Trimestre', 'Puntaje máximo'], _activities_rows(), [12, 35, 24, 22, 14], False)
     if section in ('all', 'grades'):
         _add_sheet(wb, 'Calificaciones', 'CONCENTRADO DE CALIFICACIONES', ['No.', 'Alumno', 'Actividad', 'Asignatura', 'Trimestre', 'Calificación', 'Máximo'], _grades_rows(), [6, 28, 32, 24, 22, 12, 10])
     if section in ('all', 'attendance'):
-        _add_sheet(wb, 'Asistencia', 'REGISTRO DE ASISTENCIA', ['Fecha', 'No.', 'Alumno', 'Estado', 'Observaciones'], _attendance_rows(), [12, 6, 30, 14, 38])
+        _add_attendance_sheet(wb)
     if section in ('all', 'incidents'):
         _add_sheet(wb, 'Convivencia', 'REGISTRO DE CONVIVENCIA E INCIDENCIAS', ['Fecha', 'Alumno', 'Categoría', 'Descripción', 'Acciones / acuerdos', 'Estado'], _incident_rows(), [12, 28, 18, 40, 40, 14])
     if section in ('all', 'rubrics'):
@@ -202,17 +311,17 @@ def install(app):
         if not session.get('uid'):
             return redirect('/login')
         cards = [
-            ('Todo el sistema', '/exports/all.xlsx', 'Un libro de Excel con una hoja por apartado.'),
-            ('Diagnóstico', '/exports/diagnostic.xlsx', 'Calificación, ritmos, estilos, canales, fortalezas y apoyos.'),
+            ('Todo el sistema', '/exports/all.xlsx', 'Libro completo: una hoja clara por apartado, con firmas y encabezado institucional.'),
+            ('Diagnóstico', '/exports/diagnostic.xlsx', 'Calificación, ritmos, estilos, canales, fortalezas y necesidades de apoyo.'),
             ('Alumnos y tallas', '/exports/students.xlsx', 'Expediente, tutores, teléfonos, peso, estatura, prendas y calzado.'),
-            ('Calificaciones', '/exports/grades.xlsx', 'Concentrado de actividades y calificaciones.'),
-            ('Asistencia', '/exports/attendance.xlsx', 'Registro completo de asistencia.'),
-            ('Convivencia', '/exports/incidents.xlsx', 'Incidencias, acciones y estado.'),
+            ('Calificaciones', '/exports/grades.xlsx', 'Concentrado legible de actividades y calificaciones.'),
+            ('Asistencia', '/exports/attendance.xlsx', 'Matriz por alumno y fecha, con P/F/R/J, totales y porcentaje.'),
+            ('Convivencia', '/exports/incidents.xlsx', 'Incidencias, acciones, acuerdos y estado.'),
             ('Actividades', '/exports/activities.xlsx', 'Actividades por asignatura y trimestre.'),
             ('Rúbricas', '/exports/rubrics.xlsx', 'Resultados de evaluación mediante rúbricas.'),
         ]
         html = ''.join(f'<div class="card"><h2>{escape(t)}</h2><p>{escape(d)}</p><a href="{u}" style="display:inline-block;background:#217346;color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:800">Exportar Excel</a></div>' for t,u,d in cards)
-        return core.page('Exportar a Excel', f'<h1>Centro de exportación</h1><p class="muted">Todos los archivos se generan en formato Excel, configurados para impresión en hoja carta, con el encabezado institucional.</p><div class="grid">{html}</div>')
+        return core.page('Exportar a Excel', f'<h1>Centro de exportación</h1><p class="muted">Los documentos se generan en hoja carta, con logotipos institucionales, estructura de lectura sencilla y espacios para firma del docente y visto bueno de Dirección.</p><div class="grid">{html}</div>')
 
     @app.route('/exports/<section>.xlsx')
     def export_xlsx(section):
