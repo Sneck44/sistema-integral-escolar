@@ -61,8 +61,6 @@ install_multi_user(app)
 from student_details import install as install_student_details
 install_student_details(app)
 
-# Se instala antes de Rúbricas IA para que su after_request normalice el acceso
-# después de que el módulo de rúbricas inserte sus elementos en el dashboard.
 from ui_polish import install as install_ui_polish
 install_ui_polish(app)
 
@@ -78,18 +76,18 @@ install_diagnostic(app)
 from excel_exports import install as install_excel_exports
 install_excel_exports(app)
 
-# Corrección de compatibilidad de XlsxWriter para el área de impresión.
 from excel_runtime_fix import install as install_excel_runtime_fix
 install_excel_runtime_fix()
 
-# Gestión completa de actividades: crear, editar y borrar con protección de datos asociados.
 from activity_manager import install as install_activity_manager
 install_activity_manager(app)
 
-# Gestión transversal: editar y eliminar datos capturados en todos los módulos principales.
 from data_manager import install as install_data_manager
 install_data_manager(app)
 
-# Gráficas de desempeño por trimestre y exportación a Excel lista para impresión.
 from trimester_charts import install as install_trimester_charts
 install_trimester_charts(app)
+
+# Sistema final de iconos: reemplaza símbolos/emojis por una familia SVG lineal uniforme.
+from icon_system import install as install_icon_system
+install_icon_system(app)
