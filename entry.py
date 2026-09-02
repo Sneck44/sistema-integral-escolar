@@ -76,3 +76,7 @@ install_excel_exports(app)
 # Gestión completa de actividades: crear, editar y borrar con protección de datos asociados.
 from activity_manager import install as install_activity_manager
 install_activity_manager(app)
+
+# Gestión transversal: editar y eliminar datos capturados en todos los módulos principales.
+from data_manager import install as install_data_manager
+install_data_manager(app)
