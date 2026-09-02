@@ -1,27 +1,13 @@
-import base64
 import calendar as cal
 from datetime import date, timedelta
-from flask import Response, request
+from flask import request
 
 import ui_app_base as ui
-from logo_png_data import LOGO_PNG_B64
 
 app = ui.app
 
-# Logo PNG real, optimizado y compatible con Safari/iPhone.
-def school_logo_fixed():
-    return Response(
-        base64.b64decode(LOGO_PNG_B64),
-        mimetype='image/png',
-        headers={
-            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-            'Pragma': 'no-cache',
-            'Content-Disposition': 'inline; filename="logo-benito-juarez.png"',
-            'X-Content-Type-Options': 'nosniff',
-        },
-    )
-
-app.view_functions['school_logo'] = school_logo_fixed
+# Logo institucional servido directamente como archivo estático por Vercel/Flask.
+STATIC_LOGO = '/static/logo-school.jpeg?v=20260901-final'
 
 MONTHS = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
           'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -54,14 +40,9 @@ add_range(date(2027,2,2), date(2027,2,12), 'pre', 'Preinscripciones 2027-2028')
 add_event(date(2027,7,9), 'end', 'Fin de clases')
 
 COLORS = {
-    'start': '#24934d',
-    'end': '#7b1024',
-    'suspension': '#c51631',
-    'cte': '#7b1024',
-    'intensive': '#8d5b9f',
-    'recess': '#caa45f',
-    'pre': '#3a78b8',
-    'awareness': '#d17835',
+    'start': '#24934d', 'end': '#7b1024', 'suspension': '#c51631',
+    'cte': '#7b1024', 'intensive': '#8d5b9f', 'recess': '#caa45f',
+    'pre': '#3a78b8', 'awareness': '#d17835',
 }
 
 LEGEND = [
@@ -79,10 +60,8 @@ def month_from_request():
         except (ValueError, TypeError):
             pass
     today = date.today()
-    if today < date(2026, 8, 1):
-        return 2026, 8
-    if today > date(2027, 7, 31):
-        return 2027, 7
+    if today < date(2026, 8, 1): return 2026, 8
+    if today > date(2027, 7, 31): return 2027, 7
     return today.year, today.month
 
 def shift_month(y, m, delta):
@@ -96,7 +75,6 @@ def calendar_widget():
     prev_href = f'?cal={prev_y:04d}-{prev_m:02d}' if (prev_y, prev_m) >= (2026, 8) else '#'
     next_href = f'?cal={next_y:04d}-{next_m:02d}' if (next_y, next_m) <= (2027, 7) else '#'
     today = date.today()
-
     cells = ''
     month_events = []
     seen = set()
@@ -115,29 +93,36 @@ def calendar_widget():
                 for kind, label in events:
                     key = (label, kind)
                     if key not in seen:
-                        month_events.append((d, kind, label))
-                        seen.add(key)
+                        month_events.append((d, kind, label)); seen.add(key)
             if d == today:
                 style += 'outline:2px solid #211b1d;outline-offset:2px;'
             cells += f'<span class="cal-day" style="{style}" title="{title}">{day_num}</span>'
-
     legend = ''.join(
-        f'<span style="display:inline-flex;align-items:center;gap:5px;margin:3px 8px 3px 0;font-size:10px;color:#5f5659">'
-        f'<i style="width:8px;height:8px;border-radius:50%;background:{COLORS[k]};display:inline-block"></i>{label}</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:5px;margin:3px 8px 3px 0;font-size:10px;color:#5f5659"><i style="width:8px;height:8px;border-radius:50%;background:{COLORS[k]};display:inline-block"></i>{label}</span>'
         for k, label in LEGEND
     )
-
     details = ''
     for d, kind, label in sorted(month_events, key=lambda x: x[0]):
-        details += (
-            '<div style="display:grid;grid-template-columns:9px 1fr;gap:8px;padding:5px 0;align-items:start">'
-            f'<i style="width:8px;height:8px;border-radius:50%;margin-top:4px;background:{COLORS[kind]}"></i>'
-            f'<div style="font-size:10px;line-height:1.35"><b>{d.day} de {MONTHS[m].lower()}</b> · {label}</div></div>'
-        )
+        details += f'<div style="display:grid;grid-template-columns:9px 1fr;gap:8px;padding:5px 0;align-items:start"><i style="width:8px;height:8px;border-radius:50%;margin-top:4px;background:{COLORS[kind]}"></i><div style="font-size:10px;line-height:1.35"><b>{d.day} de {MONTHS[m].lower()}</b> · {label}</div></div>'
     if not details:
         details = '<div class="muted" style="font-size:10px;padding-top:6px">Sin fechas SEP destacadas este mes.</div>'
-
     return f'''<div class="calendar-head"><a class="ghost-btn" href="{prev_href}" style="display:grid;place-items:center;text-decoration:none">‹</a><strong>{MONTHS[m]} {y}</strong><a class="ghost-btn" href="{next_href}" style="display:grid;place-items:center;text-decoration:none">›</a></div><div class="cal-week"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div><div class="cal-grid">{cells}</div><div style="border-top:1px solid #eee8e6;margin-top:10px;padding-top:8px">{legend}</div><div style="border-top:1px solid #f1ecea;margin-top:7px;padding-top:7px"><b style="font-size:11px;color:#7b1024">Fechas SEP del mes</b>{details}</div>'''
 
-# ui_app_base.dashboard looks up calendar_widget from its module globals at request time.
+# Reemplazar el calendario del dashboard base.
 ui.calendar_widget = calendar_widget
+
+# Reutilizamos toda la interfaz base, pero cambiamos cada referencia antigua del logo
+# por el archivo estático real que acaba de ser agregado al repositorio.
+_original_page = ui.page
+
+def page(title, body):
+    body = body.replace('/school-logo?v=20260901', STATIC_LOGO)
+    response = _original_page(title, body)
+    if isinstance(response, str):
+        response = response.replace('/school-logo?v=20260901', STATIC_LOGO)
+    return response
+
+ui.core.page = page
+
+# El dashboard base se conserva, incluyendo responsive y datos reales.
+app.view_functions['dashboard'] = ui.dashboard
