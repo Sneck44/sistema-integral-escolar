@@ -89,3 +89,7 @@ install_activity_manager(app)
 # Gestión transversal: editar y eliminar datos capturados en todos los módulos principales.
 from data_manager import install as install_data_manager
 install_data_manager(app)
+
+# Gráficas de desempeño por trimestre y exportación a Excel lista para impresión.
+from trimester_charts import install as install_trimester_charts
+install_trimester_charts(app)
