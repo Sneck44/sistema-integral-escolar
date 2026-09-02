@@ -58,6 +58,10 @@ ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 from multi_user import install as install_multi_user
 install_multi_user(app)
 
+# Blindaje adicional: usuarios, solicitudes y autorización de grupos son exclusivos del administrador.
+from admin_user_security import install as install_admin_user_security
+install_admin_user_security(app)
+
 # Nueve entornos con la misma interfaz y datos independientes por grupo.
 # Se instala antes de los permisos docentes para fijar primero el grupo activo.
 from group_workspaces import install as install_group_workspaces
