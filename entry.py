@@ -57,3 +57,7 @@ def add_ios_app_icon(response):
 
 # El logo horizontal del sistema sigue usando el archivo institucional definitivo.
 ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
+
+# Módulo multiusuario: registro, aprobación, roles y gestión de cuentas.
+from multi_user import install as install_multi_user
+install_multi_user(app)
