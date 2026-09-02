@@ -65,3 +65,7 @@ install_multi_user(app)
 # Expediente ampliado del alumno: peso, estatura, tallas y edición posterior.
 from student_details import install as install_student_details
 install_student_details(app)
+
+# Rúbricas profesionales asistidas por IA y calificación por criterio.
+from rubric_ai import install as install_rubric_ai
+install_rubric_ai(app)
