@@ -3,12 +3,11 @@ from datetime import date, timedelta
 from flask import request
 
 import ui_app_base as ui
-from logo_jpeg_data import LOGO_JPEG_B64
 
 app = ui.app
 
-# El logo viaja dentro del propio HTML. No depende de /static, send_file ni rutas externas.
-STATIC_LOGO = f'data:image/jpeg;base64,{LOGO_JPEG_B64.strip()}'
+# Un único origen para el logo. La ruta /school-logo la resuelve entry.py.
+STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 
 MONTHS = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
           'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -114,7 +113,7 @@ def calendar_widget():
 
 ui.calendar_widget = calendar_widget
 
-# Todas las pantallas, incluido el dashboard, pasan por la misma sustitución.
+# Todas las pantallas usan la misma ruta física del logo.
 _original_page = ui.page
 
 def page(title, body):
