@@ -61,3 +61,7 @@ ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 # Módulo multiusuario: registro, aprobación, roles y gestión de cuentas.
 from multi_user import install as install_multi_user
 install_multi_user(app)
+
+# Expediente ampliado del alumno: peso, estatura, tallas y edición posterior.
+from student_details import install as install_student_details
+install_student_details(app)
