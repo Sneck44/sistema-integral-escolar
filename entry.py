@@ -58,6 +58,11 @@ ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 from multi_user import install as install_multi_user
 install_multi_user(app)
 
+# Nueve entornos con la misma interfaz y datos independientes por grupo.
+# Se instala antes de los permisos docentes para fijar primero el grupo activo.
+from group_workspaces import install as install_group_workspaces
+install_group_workspaces(app)
+
 # Cada docente puede modificar únicamente el grupo que el administrador le asigne.
 from teacher_group_permissions import install as install_teacher_group_permissions
 install_teacher_group_permissions(app)
