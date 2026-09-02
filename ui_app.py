@@ -1,25 +1,14 @@
 import calendar as cal
-import os
 from datetime import date, timedelta
-from flask import request, send_file
+from flask import request
 
 import ui_app_base as ui
+from logo_jpeg_data import LOGO_JPEG_B64
 
 app = ui.app
 
-# Ruta interna estable: Flask entrega el JPEG original incluido en el proyecto.
-STATIC_LOGO = '/school-logo-final?v=20260902'
-
-@app.route('/school-logo-final')
-def school_logo_final():
-    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo-school.jpeg')
-    return send_file(
-        logo_path,
-        mimetype='image/jpeg',
-        conditional=True,
-        max_age=0,
-        download_name='logo-telesecundaria-benito-juarez.jpeg'
-    )
+# El logo viaja dentro del propio HTML. No depende de /static, send_file ni rutas externas.
+STATIC_LOGO = f'data:image/jpeg;base64,{LOGO_JPEG_B64.strip()}'
 
 MONTHS = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
           'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -125,17 +114,24 @@ def calendar_widget():
 
 ui.calendar_widget = calendar_widget
 
-# Esta es la corrección clave: todas las pantallas, incluido el dashboard,
-# deben pasar por la misma función page() para sustituir la referencia vieja.
+# Todas las pantallas, incluido el dashboard, pasan por la misma sustitución.
 _original_page = ui.page
 
 def page(title, body):
-    body = body.replace('/school-logo?v=20260901', STATIC_LOGO)
-    body = body.replace('/static/logo-school.jpeg?v=20260901-final', STATIC_LOGO)
+    for old_logo in (
+        '/school-logo?v=20260901',
+        '/static/logo-school.jpeg?v=20260901-final',
+        '/school-logo-final?v=20260902',
+    ):
+        body = body.replace(old_logo, STATIC_LOGO)
     response = _original_page(title, body)
     if isinstance(response, str):
-        response = response.replace('/school-logo?v=20260901', STATIC_LOGO)
-        response = response.replace('/static/logo-school.jpeg?v=20260901-final', STATIC_LOGO)
+        for old_logo in (
+            '/school-logo?v=20260901',
+            '/static/logo-school.jpeg?v=20260901-final',
+            '/school-logo-final?v=20260902',
+        ):
+            response = response.replace(old_logo, STATIC_LOGO)
     return response
 
 ui.page = page
