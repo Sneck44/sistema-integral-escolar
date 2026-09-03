@@ -5,8 +5,6 @@ import uuid
 import urllib.request
 import urllib.error
 from datetime import datetime
-from html import escape
-from io import BytesIO
 
 from flask import request, redirect, session, flash, Response
 
@@ -67,39 +65,50 @@ def _multipart(fields, files):
     return b''.join(chunks), f'multipart/form-data; boundary={boundary}'
 
 
-def _generate_ai_avatar(image_bytes, mime):
+def _role_context(profile):
+    role = (profile.role or '').upper() if profile else ''
+    gender = session.get('welcome_gender', 'M')
+    if role == 'DOCENTE':
+        return 'docente mujer' if gender == 'F' else 'docente hombre'
+    if role == 'DIRECCION':
+        return 'directiva escolar mujer' if gender == 'F' else 'directivo escolar hombre'
+    if role == 'USAER':
+        return 'profesional de apoyo educativo mujer' if gender == 'F' else 'profesional de apoyo educativo hombre'
+    if role == 'ADMIN':
+        return 'personal educativo mujer' if gender == 'F' else 'personal educativo hombre'
+    return 'integrante del personal escolar mujer' if gender == 'F' else 'integrante del personal escolar hombre'
+
+
+def _generate_ai_avatar(image_bytes, mime, profile):
     key = os.getenv('OPENAI_API_KEY')
     if not key:
         raise RuntimeError('La generación con IA requiere configurar OPENAI_API_KEY.')
 
     model = os.getenv('OPENAI_IMAGE_MODEL', 'gpt-image-1')
+    role_context = _role_context(profile)
     prompt = (
-        'Crea un avatar profesional y amable para el perfil de un sistema escolar a partir de esta fotografía. '
-        'Conserva claramente la identidad, rasgos faciales, tono de piel, cabello y expresión reconocible de la persona. '
-        'Encuadre de cabeza y hombros, mirada natural, iluminación limpia y fondo neutro elegante en tonos claros. '
-        'Estilo ilustración digital realista y sobria, apropiada para un docente o personal escolar. '
-        'No agregues texto, logotipos, uniformes inventados, accesorios innecesarios ni cambies edad o identidad.'
+        'Transforma esta fotografía en un avatar 3D de animación cinematográfica al estilo visual de las películas de Pixar. '
+        'Debe conservar claramente la identidad de la persona: forma del rostro, ojos, nariz, sonrisa, tono de piel, cabello, edad aparente y rasgos distintivos. '
+        f'Representa a la persona como {role_context}, con apariencia profesional, cercana, amable y confiable en un contexto educativo. '
+        'Encuadre cuadrado de cabeza y hombros, mirada hacia cámara, expresión natural y cálida, iluminación suave de película animada, modelado 3D pulido, '
+        'ojos expresivos sin exagerarlos demasiado, proporciones agradables y fondo escolar desenfocado con pizarrón, libros o elementos de aula discretos. '
+        'La vestimenta debe ser profesional-casual propia de un docente o personal educativo, sin uniformes inventados. '
+        'No agregues texto, nombres, logotipos, marcas, personajes conocidos ni elementos infantiles excesivos. '
+        'El resultado debe funcionar como fotografía de perfil profesional y mantener a la persona inmediatamente reconocible.'
     )
     ext = 'png' if mime == 'image/png' else ('webp' if mime == 'image/webp' else 'jpg')
     body, content_type = _multipart(
-        {
-            'model': model,
-            'prompt': prompt,
-            'size': '1024x1024',
-        },
+        {'model': model, 'prompt': prompt, 'size': '1024x1024'},
         [('image', f'perfil.{ext}', mime, image_bytes)],
     )
     req = urllib.request.Request(
         'https://api.openai.com/v1/images/edits',
         data=body,
-        headers={
-            'Authorization': f'Bearer {key}',
-            'Content-Type': content_type,
-        },
+        headers={'Authorization': f'Bearer {key}', 'Content-Type': content_type},
         method='POST',
     )
     try:
-        with urllib.request.urlopen(req, timeout=90) as res:
+        with urllib.request.urlopen(req, timeout=120) as res:
             data = json.loads(res.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
         detail = e.read().decode('utf-8', errors='ignore')[:500]
@@ -123,16 +132,12 @@ def _profile_avatar_panel(uid):
     record = _avatar(uid)
     has_avatar = bool(record and (record.avatar_data or record.original_data))
     preview = '/account/avatar/image?v=' + str(int(record.updated_at.timestamp()) if record and record.updated_at else 1) if has_avatar else ''
-    current = (
-        f'<img class="avatar-profile-current" src="{preview}" alt="Avatar actual">'
-        if has_avatar else
-        '<div class="avatar-profile-placeholder">◎</div>'
-    )
+    current = f'<img class="avatar-profile-current" src="{preview}" alt="Avatar actual">' if has_avatar else '<div class="avatar-profile-placeholder">◎</div>'
     return f'''
     <section class="card avatar-profile-card">
       <div class="avatar-profile-head">
         <div>{current}</div>
-        <div><h2>Avatar de usuario</h2><p class="muted">Toma una fotografía con la cámara y úsala directamente o conviértela en un avatar profesional con IA.</p></div>
+        <div><h2>Avatar de usuario</h2><p class="muted">Toma una fotografía o elige una imagen y conviértela con IA en un avatar 3D estilo Pixar, adaptado a tu función educativa.</p></div>
       </div>
       <form method="post" action="/account/avatar" id="avatarForm">
         <input type="hidden" name="photo_data" id="avatarPhotoData">
@@ -146,8 +151,9 @@ def _profile_avatar_panel(uid):
           <button type="button" class="avatar-secondary" id="takePhoto" disabled>Tomar fotografía</button>
           <label class="avatar-upload">Elegir foto<input id="avatarFile" type="file" accept="image/*" capture="user"></label>
           <button type="submit" name="mode" value="photo" id="savePhoto" disabled>Usar como avatar</button>
-          <button type="submit" name="mode" value="ai" class="avatar-ai" id="makeAI" disabled>Crear avatar con IA</button>
+          <button type="submit" name="mode" value="ai" class="avatar-ai" id="makeAI" disabled>Crear avatar estilo Pixar con IA</button>
         </div>
+        <div class="avatar-ai-note"><b>Avatar con IA:</b> conserva tus rasgos y te representa como docente o personal educativo, con fondo escolar y acabado de animación 3D cinematográfica.</div>
         <p class="muted avatar-note">La fotografía se utiliza únicamente para crear tu avatar de perfil. La opción con IA requiere que el servicio de IA del sistema esté configurado.</p>
       </form>
     </section>
@@ -158,8 +164,8 @@ def _profile_avatar_panel(uid):
     .avatar-camera-box{{position:relative;width:min(100%,520px);aspect-ratio:1/1;border-radius:24px;overflow:hidden;background:#efe9e8;border:1px solid #eadfdd}}
     .avatar-camera-box video,.avatar-camera-box canvas{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}}.avatar-camera-box canvas{{display:none}}.avatar-empty{{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:8px;color:#766b6d}}.avatar-empty span{{font-size:46px;color:#7b1024}}
     .avatar-actions{{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px;align-items:center}}.avatar-actions button,.avatar-upload{{width:auto!important;padding:10px 14px;border-radius:10px;font-weight:800;cursor:pointer}}
-    .avatar-secondary,.avatar-upload{{background:#f4ecee!important;color:#6d1022!important;border:1px solid #e5d3d8!important}}.avatar-upload input{{display:none}}.avatar-ai{{background:linear-gradient(135deg,#7b1024,#a66a2c)!important;color:#fff!important}}.avatar-note{{margin-top:11px;max-width:720px}}
-    .avatar-user-img{{width:100%;height:100%;object-fit:cover;border-radius:50%}}
+    .avatar-secondary,.avatar-upload{{background:#f4ecee!important;color:#6d1022!important;border:1px solid #e5d3d8!important}}.avatar-upload input{{display:none}}.avatar-ai{{background:linear-gradient(135deg,#7b1024,#a66a2c)!important;color:#fff!important}}
+    .avatar-ai-note{{margin-top:14px;padding:12px 14px;border:1px solid #ead8ad;background:#fff8e9;border-radius:12px;color:#6d5120;font-size:12px;line-height:1.5}}.avatar-note{{margin-top:11px;max-width:720px}}.avatar-user-img{{width:100%;height:100%;object-fit:cover;border-radius:50%}}
     @media(max-width:600px){{.avatar-profile-head{{align-items:flex-start}}.avatar-actions>*{{flex:1 1 45%;text-align:center}}}}
     </style>
     <script id="profile-avatar-script">
@@ -171,7 +177,7 @@ def _profile_avatar_panel(uid):
       start.onclick=async()=>{{try{{stream=await navigator.mediaDevices.getUserMedia({{video:{{facingMode:'user',width:{{ideal:1080}},height:{{ideal:1080}}}},audio:false}});video.srcObject=stream;video.style.display='block';canvas.style.display='none';empty.style.display='none';take.disabled=false;}}catch(e){{alert('No fue posible abrir la cámara. Puedes elegir una fotografía desde tu dispositivo.');}}}};
       take.onclick=()=>{{const s=Math.min(video.videoWidth||720,video.videoHeight||720),sx=((video.videoWidth||720)-s)/2,sy=((video.videoHeight||720)-s)/2;const ctx=canvas.getContext('2d');ctx.drawImage(video,sx,sy,s,s,0,0,720,720);canvas.style.display='block';video.style.display='none';ready(canvas.toDataURL('image/jpeg',.88));if(stream)stream.getTracks().forEach(t=>t.stop());take.disabled=true;}};
       file.onchange=()=>{{const f=file.files&&file.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{{const img=new Image();img.onload=()=>{{const s=Math.min(img.width,img.height),sx=(img.width-s)/2,sy=(img.height-s)/2;const ctx=canvas.getContext('2d');ctx.drawImage(img,sx,sy,s,s,0,0,720,720);canvas.style.display='block';video.style.display='none';ready(canvas.toDataURL('image/jpeg',.88));}};img.src=r.result;}};r.readAsDataURL(f);}};
-      document.getElementById('avatarForm').addEventListener('submit',e=>{{if(!data.value){{e.preventDefault();alert('Primero toma o selecciona una fotografía.');return;}}const b=e.submitter;if(b&&b.value==='ai'){{b.disabled=true;b.textContent='Creando avatar…';}}}});
+      document.getElementById('avatarForm').addEventListener('submit',e=>{{if(!data.value){{e.preventDefault();alert('Primero toma o selecciona una fotografía.');return;}}const b=e.submitter;if(b&&b.value==='ai'){{b.disabled=true;b.textContent='Creando avatar estilo Pixar…';}}}});
     }})();
     </script>'''
 
@@ -201,12 +207,12 @@ def install(app):
             record.original_mime = mime
             mode = request.form.get('mode', 'photo')
             if mode == 'ai':
-                generated, generated_mime = _generate_ai_avatar(raw, mime)
+                generated, generated_mime = _generate_ai_avatar(raw, mime, profile)
                 if len(generated) > 8 * 1024 * 1024:
                     raise RuntimeError('El avatar generado es demasiado grande.')
                 record.avatar_data = generated
                 record.avatar_mime = generated_mime
-                flash('Tu avatar con IA fue creado y guardado.')
+                flash('Tu avatar estilo Pixar con IA fue creado y guardado correctamente.')
             else:
                 record.avatar_data = None
                 record.avatar_mime = mime
