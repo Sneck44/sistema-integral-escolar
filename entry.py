@@ -121,9 +121,17 @@ install_teacher_identity(app)
 from attendance_list_export import install as install_attendance_list_export
 install_attendance_list_export(app)
 
+# Refuerzo visual para asegurar que el botón de lista aparezca en Asistencia.
+from attendance_ui_fix import install as install_attendance_ui_fix
+install_attendance_ui_fix(app)
+
 # Avatar personal desde cámara o generado con IA.
 from profile_avatar import install as install_profile_avatar
 install_profile_avatar(app)
+
+# Mantiene la foto de usuario en tamaño compacto en todas las pantallas.
+from avatar_global_fix import install as install_avatar_global_fix
+install_avatar_global_fix(app)
 
 # Sistema final de iconos: reemplaza símbolos/emojis por una familia SVG lineal uniforme.
 from icon_system import install as install_icon_system
