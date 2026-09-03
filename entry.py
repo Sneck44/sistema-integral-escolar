@@ -39,6 +39,11 @@ def add_ios_app_icon(response):
 
 ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 
+# Se registra primero para que su after_request se ejecute al final y deje
+# definitivamente ordenado el menú y visible el gestor de logotipos.
+from admin_ui_finalizer import install as install_admin_ui_finalizer
+install_admin_ui_finalizer(app)
+
 from multi_user import install as install_multi_user
 install_multi_user(app)
 from admin_user_security import install as install_admin_user_security
@@ -76,10 +81,8 @@ install_group_export_fix()
 from teacher_identity import install as install_teacher_identity
 install_teacher_identity(app)
 
-# El administrador elige desde Configuracion los logos izquierdo y derecho de los formatos.
 from document_logos import install as install_document_logos
 install_document_logos(app)
-# Las exportaciones generales usan los logos seleccionados por el administrador.
 from document_logo_exports import install as install_document_logo_exports
 install_document_logo_exports()
 
