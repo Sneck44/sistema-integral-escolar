@@ -117,6 +117,10 @@ install_group_export_fix()
 from teacher_identity import install as install_teacher_identity
 install_teacher_identity(app)
 
+# Genera desde Asistencia la lista institucional con datos del grupo activo.
+from attendance_list_export import install as install_attendance_list_export
+install_attendance_list_export(app)
+
 # Avatar personal desde cámara o generado con IA.
 from profile_avatar import install as install_profile_avatar
 install_profile_avatar(app)
