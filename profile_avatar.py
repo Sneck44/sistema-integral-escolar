@@ -13,6 +13,8 @@ import multi_user
 
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_AVATAR_BYTES = 8 * 1024 * 1024
+DEFAULT_IMAGE_MODEL = 'gpt-image-2'
 
 
 class UserAvatar(core.db.Model):
@@ -33,7 +35,7 @@ def _avatar(uid):
 def _decode_data_url(value):
     value = (value or '').strip()
     if not value.startswith('data:image/') or ',' not in value:
-        raise ValueError('No se recibió una fotografía válida.')
+        raise ValueError('Primero toma o selecciona una fotografía válida.')
     header, payload = value.split(',', 1)
     mime = header.split(';', 1)[0].replace('data:', '').lower()
     if mime not in ('image/jpeg', 'image/png', 'image/webp'):
@@ -67,34 +69,34 @@ def _multipart(fields, files):
 
 def _role_context(profile):
     role = (profile.role or '').upper() if profile else ''
-    gender = session.get('welcome_gender', 'M')
+    feminine = session.get('welcome_gender') == 'F'
     if role == 'DOCENTE':
-        return 'docente mujer' if gender == 'F' else 'docente hombre'
+        return 'una docente de telesecundaria' if feminine else 'un docente de telesecundaria'
     if role == 'DIRECCION':
-        return 'directiva escolar mujer' if gender == 'F' else 'directivo escolar hombre'
+        return 'una directiva escolar' if feminine else 'un directivo escolar'
     if role == 'USAER':
-        return 'profesional de apoyo educativo mujer' if gender == 'F' else 'profesional de apoyo educativo hombre'
+        return 'una profesional de apoyo educativo' if feminine else 'un profesional de apoyo educativo'
     if role == 'ADMIN':
-        return 'personal educativo mujer' if gender == 'F' else 'personal educativo hombre'
-    return 'integrante del personal escolar mujer' if gender == 'F' else 'integrante del personal escolar hombre'
+        return 'una integrante del personal educativo' if feminine else 'un integrante del personal educativo'
+    return 'una integrante del personal escolar' if feminine else 'un integrante del personal escolar'
 
 
 def _generate_ai_avatar(image_bytes, mime, profile):
-    key = os.getenv('OPENAI_API_KEY')
+    key = (os.getenv('OPENAI_API_KEY') or '').strip()
     if not key:
-        raise RuntimeError('La generación con IA requiere configurar OPENAI_API_KEY.')
+        raise RuntimeError('La IA aún no está habilitada en producción. Falta configurar OPENAI_API_KEY en Vercel.')
 
-    model = os.getenv('OPENAI_IMAGE_MODEL', 'gpt-image-1')
+    model = (os.getenv('OPENAI_IMAGE_MODEL') or DEFAULT_IMAGE_MODEL).strip()
     role_context = _role_context(profile)
     prompt = (
-        'Transforma esta fotografía en un avatar 3D de animación cinematográfica al estilo visual de las películas de Pixar. '
-        'Debe conservar claramente la identidad de la persona: forma del rostro, ojos, nariz, sonrisa, tono de piel, cabello, edad aparente y rasgos distintivos. '
-        f'Representa a la persona como {role_context}, con apariencia profesional, cercana, amable y confiable en un contexto educativo. '
-        'Encuadre cuadrado de cabeza y hombros, mirada hacia cámara, expresión natural y cálida, iluminación suave de película animada, modelado 3D pulido, '
-        'ojos expresivos sin exagerarlos demasiado, proporciones agradables y fondo escolar desenfocado con pizarrón, libros o elementos de aula discretos. '
-        'La vestimenta debe ser profesional-casual propia de un docente o personal educativo, sin uniformes inventados. '
-        'No agregues texto, nombres, logotipos, marcas, personajes conocidos ni elementos infantiles excesivos. '
-        'El resultado debe funcionar como fotografía de perfil profesional y mantener a la persona inmediatamente reconocible.'
+        'Usa la fotografía suministrada como referencia principal de identidad. '
+        'Crea un avatar 3D de animación cinematográfica con estética tipo Pixar, cálida, pulida y profesional. '
+        'Conserva fielmente identidad, forma del rostro, tono de piel, cabello, ojos, nariz, sonrisa, edad aparente y rasgos distintivos. '
+        f'Representa a la persona como {role_context}, con presencia profesional, amable y cercana. '
+        'Encuadre cuadrado de cabeza y hombros, mirada a cámara, expresión natural, vestimenta profesional-casual apropiada para una escuela, '
+        'iluminación suave cinematográfica y fondo de aula desenfocado con pizarrón o libros discretos. '
+        'No añadas texto, nombres, logotipos, marcas, uniformes inventados ni personajes conocidos. '
+        'Debe funcionar como avatar profesional del sistema escolar y la persona debe ser inmediatamente reconocible.'
     )
     ext = 'png' if mime == 'image/png' else ('webp' if mime == 'image/webp' else 'jpg')
     body, content_type = _multipart(
@@ -111,7 +113,7 @@ def _generate_ai_avatar(image_bytes, mime, profile):
         with urllib.request.urlopen(req, timeout=120) as res:
             data = json.loads(res.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
-        detail = e.read().decode('utf-8', errors='ignore')[:500]
+        detail = e.read().decode('utf-8', errors='ignore')[:600]
         raise RuntimeError(f'La IA no pudo generar el avatar ({e.code}). {detail}')
     except Exception as e:
         raise RuntimeError(f'No fue posible conectar con el servicio de IA: {e}')
@@ -121,7 +123,8 @@ def _generate_ai_avatar(image_bytes, mime, profile):
         raise RuntimeError('La IA no devolvió una imagen.')
     item = items[0]
     if item.get('b64_json'):
-        return base64.b64decode(item['b64_json']), 'image/png'
+        generated = base64.b64decode(item['b64_json'])
+        return generated, 'image/png'
     if item.get('url'):
         with urllib.request.urlopen(item['url'], timeout=45) as res:
             return res.read(), res.headers.get_content_type() or 'image/png'
@@ -131,53 +134,83 @@ def _generate_ai_avatar(image_bytes, mime, profile):
 def _profile_avatar_panel(uid):
     record = _avatar(uid)
     has_avatar = bool(record and (record.avatar_data or record.original_data))
-    preview = '/account/avatar/image?v=' + str(int(record.updated_at.timestamp()) if record and record.updated_at else 1) if has_avatar else ''
-    current = f'<img class="avatar-profile-current" src="{preview}" alt="Avatar actual">' if has_avatar else '<div class="avatar-profile-placeholder">◎</div>'
+    stamp = int(record.updated_at.timestamp()) if record and record.updated_at else 1
+    current = (
+        f'<img class="avatar-profile-current" src="/account/avatar/image?v={stamp}" alt="Avatar actual">'
+        if has_avatar else '<div class="avatar-profile-placeholder">◎</div>'
+    )
+    ai_ready = bool((os.getenv('OPENAI_API_KEY') or '').strip())
+    status = (
+        '<span class="avatar-status ok">IA lista</span>'
+        if ai_ready else '<span class="avatar-status warn">IA pendiente de clave</span>'
+    )
     return f'''
     <section class="card avatar-profile-card">
       <div class="avatar-profile-head">
         <div>{current}</div>
-        <div><h2>Avatar de usuario</h2><p class="muted">Toma una fotografía o elige una imagen y conviértela con IA en un avatar 3D estilo Pixar, adaptado a tu función educativa.</p></div>
+        <div>
+          <h2>Avatar con IA</h2>
+          <p class="muted">Toma una foto o elige una imagen. Después crea tu avatar 3D estilo Pixar adaptado a tu función educativa.</p>
+          {status}
+        </div>
       </div>
       <form method="post" action="/account/avatar" id="avatarForm">
         <input type="hidden" name="photo_data" id="avatarPhotoData">
         <div class="avatar-camera-box">
           <video id="avatarVideo" autoplay playsinline muted></video>
           <canvas id="avatarCanvas" width="720" height="720"></canvas>
-          <div class="avatar-empty" id="avatarEmpty"><span>◎</span><b>Activa la cámara o elige una foto</b></div>
+          <div class="avatar-empty" id="avatarEmpty"><span>◎</span><b>Toma o selecciona una fotografía</b></div>
+          <button type="button" id="capturePhoto" class="avatar-capture" disabled aria-label="Tomar fotografía">●</button>
         </div>
-        <div class="avatar-actions">
-          <button type="button" class="avatar-secondary" id="startCamera">Abrir cámara</button>
-          <button type="button" class="avatar-secondary" id="takePhoto" disabled>Tomar fotografía</button>
-          <label class="avatar-upload">Elegir foto<input id="avatarFile" type="file" accept="image/*" capture="user"></label>
-          <button type="submit" name="mode" value="photo" id="savePhoto" disabled>Usar como avatar</button>
-          <button type="submit" name="mode" value="ai" class="avatar-ai" id="makeAI" disabled>Crear avatar estilo Pixar con IA</button>
+        <div class="avatar-source-actions">
+          <button type="button" class="avatar-secondary" id="startCamera">Usar cámara</button>
+          <label class="avatar-upload">Elegir fotografía<input id="avatarFile" type="file" accept="image/*" capture="user"></label>
         </div>
-        <div class="avatar-ai-note"><b>Avatar con IA:</b> conserva tus rasgos y te representa como docente o personal educativo, con fondo escolar y acabado de animación 3D cinematográfica.</div>
-        <p class="muted avatar-note">La fotografía se utiliza únicamente para crear tu avatar de perfil. La opción con IA requiere que el servicio de IA del sistema esté configurado.</p>
+        <button type="submit" class="avatar-ai-main" id="makeAI" disabled>Crear avatar con IA</button>
+        <div class="avatar-ai-note"><b>Resultado:</b> avatar 3D estilo Pixar, conservando tus rasgos y representándote como docente o integrante del personal educativo.</div>
       </form>
     </section>
     <style id="profile-avatar-style">
-    .avatar-profile-card{{margin-top:18px}}.avatar-profile-head{{display:flex;align-items:center;gap:16px;margin-bottom:18px}}.avatar-profile-head h2{{margin:0 0 5px}}
+    .avatar-profile-card{{margin-top:18px;max-width:760px}}.avatar-profile-head{{display:flex;align-items:center;gap:16px;margin-bottom:18px}}.avatar-profile-head h2{{margin:0 0 5px}}
     .avatar-profile-current,.avatar-profile-placeholder{{width:82px;height:82px;border-radius:50%;object-fit:cover;border:3px solid #caa45f;box-shadow:0 7px 20px rgba(74,18,32,.12)}}
     .avatar-profile-placeholder{{display:grid;place-items:center;background:#f5ecee;color:#7b1024;font-size:32px;font-weight:900}}
-    .avatar-camera-box{{position:relative;width:min(100%,520px);aspect-ratio:1/1;border-radius:24px;overflow:hidden;background:#efe9e8;border:1px solid #eadfdd}}
-    .avatar-camera-box video,.avatar-camera-box canvas{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}}.avatar-camera-box canvas{{display:none}}.avatar-empty{{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:8px;color:#766b6d}}.avatar-empty span{{font-size:46px;color:#7b1024}}
-    .avatar-actions{{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px;align-items:center}}.avatar-actions button,.avatar-upload{{width:auto!important;padding:10px 14px;border-radius:10px;font-weight:800;cursor:pointer}}
-    .avatar-secondary,.avatar-upload{{background:#f4ecee!important;color:#6d1022!important;border:1px solid #e5d3d8!important}}.avatar-upload input{{display:none}}.avatar-ai{{background:linear-gradient(135deg,#7b1024,#a66a2c)!important;color:#fff!important}}
-    .avatar-ai-note{{margin-top:14px;padding:12px 14px;border:1px solid #ead8ad;background:#fff8e9;border-radius:12px;color:#6d5120;font-size:12px;line-height:1.5}}.avatar-note{{margin-top:11px;max-width:720px}}.avatar-user-img{{width:100%;height:100%;object-fit:cover;border-radius:50%}}
-    @media(max-width:600px){{.avatar-profile-head{{align-items:flex-start}}.avatar-actions>*{{flex:1 1 45%;text-align:center}}}}
+    .avatar-status{{display:inline-flex;margin-top:4px;padding:5px 9px;border-radius:999px;font-size:10px;font-weight:900}}.avatar-status.ok{{background:#e7f5ea;color:#236334}}.avatar-status.warn{{background:#fff4dc;color:#76561b}}
+    .avatar-camera-box{{position:relative;width:min(100%,480px);aspect-ratio:1/1;border-radius:22px;overflow:hidden;background:#efe9e8;border:1px solid #eadfdd}}
+    .avatar-camera-box video,.avatar-camera-box canvas{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}}.avatar-camera-box canvas{{display:none}}
+    .avatar-empty{{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:8px;color:#766b6d}}.avatar-empty span{{font-size:46px;color:#7b1024}}
+    .avatar-capture{{display:none;position:absolute!important;left:50%;bottom:16px;transform:translateX(-50%);width:58px!important;height:58px!important;border-radius:50%!important;padding:0!important;background:#fff!important;color:#7b1024!important;border:5px solid rgba(123,16,36,.22)!important;font-size:24px!important;box-shadow:0 5px 18px rgba(0,0,0,.18)}}
+    .avatar-source-actions{{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;max-width:480px}}.avatar-source-actions>*{{flex:1 1 180px;text-align:center}}
+    .avatar-secondary,.avatar-upload{{width:auto!important;padding:11px 14px;border-radius:10px;font-weight:800;cursor:pointer;background:#f4ecee!important;color:#6d1022!important;border:1px solid #e5d3d8!important}}.avatar-upload input{{display:none}}
+    .avatar-ai-main{{display:block;width:min(100%,480px)!important;margin-top:12px!important;padding:13px 18px!important;border-radius:11px!important;background:linear-gradient(135deg,#7b1024,#a66a2c)!important;color:#fff!important;font-weight:900!important}}
+    .avatar-ai-main:disabled{{opacity:.48;cursor:not-allowed}}.avatar-ai-note{{max-width:480px;margin-top:12px;padding:11px 13px;border:1px solid #ead8ad;background:#fff8e9;border-radius:12px;color:#6d5120;font-size:12px;line-height:1.5}}.avatar-user-img{{width:100%;height:100%;object-fit:cover;border-radius:50%}}
+    @media(max-width:600px){{.avatar-profile-head{{align-items:flex-start}}}}
     </style>
     <script id="profile-avatar-script">
     (function(){{
-      const video=document.getElementById('avatarVideo'), canvas=document.getElementById('avatarCanvas'), empty=document.getElementById('avatarEmpty');
-      const data=document.getElementById('avatarPhotoData'), start=document.getElementById('startCamera'), take=document.getElementById('takePhoto'), file=document.getElementById('avatarFile');
-      const save=document.getElementById('savePhoto'), ai=document.getElementById('makeAI'); let stream=null;
-      function ready(v){{data.value=v;save.disabled=false;ai.disabled=false;empty.style.display='none';}}
-      start.onclick=async()=>{{try{{stream=await navigator.mediaDevices.getUserMedia({{video:{{facingMode:'user',width:{{ideal:1080}},height:{{ideal:1080}}}},audio:false}});video.srcObject=stream;video.style.display='block';canvas.style.display='none';empty.style.display='none';take.disabled=false;}}catch(e){{alert('No fue posible abrir la cámara. Puedes elegir una fotografía desde tu dispositivo.');}}}};
-      take.onclick=()=>{{const s=Math.min(video.videoWidth||720,video.videoHeight||720),sx=((video.videoWidth||720)-s)/2,sy=((video.videoHeight||720)-s)/2;const ctx=canvas.getContext('2d');ctx.drawImage(video,sx,sy,s,s,0,0,720,720);canvas.style.display='block';video.style.display='none';ready(canvas.toDataURL('image/jpeg',.88));if(stream)stream.getTracks().forEach(t=>t.stop());take.disabled=true;}};
-      file.onchange=()=>{{const f=file.files&&file.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{{const img=new Image();img.onload=()=>{{const s=Math.min(img.width,img.height),sx=(img.width-s)/2,sy=(img.height-s)/2;const ctx=canvas.getContext('2d');ctx.drawImage(img,sx,sy,s,s,0,0,720,720);canvas.style.display='block';video.style.display='none';ready(canvas.toDataURL('image/jpeg',.88));}};img.src=r.result;}};r.readAsDataURL(f);}};
-      document.getElementById('avatarForm').addEventListener('submit',e=>{{if(!data.value){{e.preventDefault();alert('Primero toma o selecciona una fotografía.');return;}}const b=e.submitter;if(b&&b.value==='ai'){{b.disabled=true;b.textContent='Creando avatar estilo Pixar…';}}}});
+      const video=document.getElementById('avatarVideo'),canvas=document.getElementById('avatarCanvas'),empty=document.getElementById('avatarEmpty');
+      const data=document.getElementById('avatarPhotoData'),start=document.getElementById('startCamera'),capture=document.getElementById('capturePhoto'),file=document.getElementById('avatarFile'),ai=document.getElementById('makeAI');
+      let stream=null;
+      function imageReady(value){{data.value=value;ai.disabled=false;empty.style.display='none';capture.style.display='none';}}
+      start.onclick=async()=>{{
+        try{{
+          if(stream)stream.getTracks().forEach(t=>t.stop());
+          stream=await navigator.mediaDevices.getUserMedia({{video:{{facingMode:'user',width:{{ideal:1080}},height:{{ideal:1080}}}},audio:false}});
+          video.srcObject=stream;video.style.display='block';canvas.style.display='none';empty.style.display='none';capture.disabled=false;capture.style.display='block';
+        }}catch(e){{alert('No fue posible abrir la cámara. Puedes elegir una fotografía desde tu dispositivo.');}}
+      }};
+      capture.onclick=()=>{{
+        const vw=video.videoWidth||720,vh=video.videoHeight||720,s=Math.min(vw,vh),sx=(vw-s)/2,sy=(vh-s)/2,ctx=canvas.getContext('2d');
+        ctx.drawImage(video,sx,sy,s,s,0,0,720,720);canvas.style.display='block';video.style.display='none';imageReady(canvas.toDataURL('image/jpeg',.9));
+        if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;
+      }};
+      file.onchange=()=>{{
+        const f=file.files&&file.files[0];if(!f)return;const r=new FileReader();
+        r.onload=()=>{{const img=new Image();img.onload=()=>{{const s=Math.min(img.width,img.height),sx=(img.width-s)/2,sy=(img.height-s)/2,ctx=canvas.getContext('2d');ctx.drawImage(img,sx,sy,s,s,0,0,720,720);canvas.style.display='block';video.style.display='none';imageReady(canvas.toDataURL('image/jpeg',.9));}};img.src=r.result;}};r.readAsDataURL(f);
+      }};
+      document.getElementById('avatarForm').addEventListener('submit',e=>{{
+        if(!data.value){{e.preventDefault();alert('Primero toma o selecciona una fotografía.');return;}}
+        ai.disabled=true;ai.textContent='Creando avatar con IA…';
+      }});
     }})();
     </script>'''
 
@@ -199,26 +232,20 @@ def install(app):
             return redirect('/login')
         try:
             raw, mime = _decode_data_url(request.form.get('photo_data'))
+            generated, generated_mime = _generate_ai_avatar(raw, mime, profile)
+            if not generated or len(generated) > MAX_AVATAR_BYTES:
+                raise RuntimeError('El avatar generado no pudo guardarse correctamente.')
             record = _avatar(uid)
             if not record:
                 record = UserAvatar(user_id=uid)
                 core.db.session.add(record)
             record.original_data = raw
             record.original_mime = mime
-            mode = request.form.get('mode', 'photo')
-            if mode == 'ai':
-                generated, generated_mime = _generate_ai_avatar(raw, mime, profile)
-                if len(generated) > 8 * 1024 * 1024:
-                    raise RuntimeError('El avatar generado es demasiado grande.')
-                record.avatar_data = generated
-                record.avatar_mime = generated_mime
-                flash('Tu avatar estilo Pixar con IA fue creado y guardado correctamente.')
-            else:
-                record.avatar_data = None
-                record.avatar_mime = mime
-                flash('Tu fotografía quedó guardada como avatar.')
+            record.avatar_data = generated
+            record.avatar_mime = generated_mime
             record.updated_at = datetime.utcnow()
             core.db.session.commit()
+            flash('Tu avatar con IA fue creado y guardado correctamente.')
         except Exception as e:
             core.db.session.rollback()
             flash(str(e))
@@ -236,7 +263,7 @@ def install(app):
         mime = record.avatar_mime if record.avatar_data else record.original_mime
         if not data:
             return Response(status=404)
-        return Response(data, mimetype=mime or 'image/jpeg', headers={'Cache-Control':'private, no-store, max-age=0'})
+        return Response(data, mimetype=mime or 'image/png', headers={'Cache-Control':'private, no-store, max-age=0'})
 
     @app.after_request
     def avatar_profile_ui(response):
@@ -246,9 +273,8 @@ def install(app):
         html = response.get_data(as_text=True)
         if request.path == '/account/profile' and 'id="profile-avatar-style"' not in html:
             panel = _profile_avatar_panel(uid)
-            marker = '</main>'
-            if marker in html:
-                html = html.replace(marker, panel + marker, 1)
+            if '</main>' in html:
+                html = html.replace('</main>', panel + '</main>', 1)
             elif '</body>' in html:
                 html = html.replace('</body>', panel + '</body>', 1)
         record = _avatar(uid)
