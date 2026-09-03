@@ -102,6 +102,10 @@ install_responsive_runtime(app)
 from integral_suite import install as install_integral_suite
 install_integral_suite(app)
 
+# Hace visibles los 11 módulos desde escritorio, móvil, inicio y alumnos.
+from suite_navigation import install as install_suite_navigation
+install_suite_navigation(app)
+
 from icon_system import install as install_icon_system
 install_icon_system(app)
 from login_animation import install as install_login_animation
