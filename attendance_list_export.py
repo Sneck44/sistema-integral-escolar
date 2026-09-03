@@ -1,8 +1,7 @@
 import io
 import os
-from datetime import date
 
-from flask import send_file, session
+from flask import request, send_file, session
 import xlsxwriter
 
 import app as core
@@ -76,7 +75,6 @@ def build_attendance_workbook():
     ws.set_column('D:AD', 1.9)
     ws.set_column('AE:AF', 3.2)
 
-    # Encabezado institucional, conservando la disposición general del formato proporcionado.
     ws.set_row(0, 20); ws.set_row(1, 18); ws.set_row(2, 18); ws.set_row(3, 18); ws.set_row(4, 12)
     logos = _logo_candidates()
     if os.path.exists(logos[0]):
@@ -105,8 +103,7 @@ def build_attendance_workbook():
 
     students = core.Student.query.filter_by(status='ACTIVO').order_by(core.Student.list_no, core.Student.paternal, core.Student.maternal, core.Student.names).all()
     first_row = 14
-    min_rows = 28
-    data_rows = max(min_rows, len(students))
+    data_rows = max(28, len(students))
     for i in range(data_rows):
         row = first_row + i
         if i < len(students):
@@ -139,7 +136,6 @@ def build_attendance_workbook():
     ws.merge_range(name_row, 11, name_row, 29, 'MTRA. NELLY AZUCENA HERNÁNDEZ PICAZO', fmt_sig_name)
 
     ws.print_area(0, 0, name_row + 1, 29)
-    ws.repeat_rows(0, 13)
     wb.close()
     output.seek(0)
     return output
@@ -161,13 +157,11 @@ def install(app):
 
     @app.after_request
     def attendance_export_button(response):
-        if request_path := getattr(__import__('flask').request, 'path', ''):
-            pass
-        if 'text/html' not in response.headers.get('Content-Type', '') or request_path != '/attendance' or not session.get('uid'):
+        if 'text/html' not in response.headers.get('Content-Type', '') or request.path != '/attendance' or not session.get('uid'):
             return response
         html = response.get_data(as_text=True)
         if '/attendance/list.xlsx' not in html:
-            button = '<div class="card attendance-list-card"><h2>Lista de asistencia para imprimir</h2><p class="muted">Genera el formato institucional con el ciclo escolar, grupo, docente titular y alumnos del grupo activo.</p><a href="/attendance/list.xlsx" style="display:inline-block;text-decoration:none;background:#7b1024;color:white;padding:11px 16px;border-radius:10px;font-weight:800">Generar lista de asistencia en Excel</a></div>'
+            button = '<div class="card attendance-list-card"><h2>Lista de asistencia para imprimir</h2><p class="muted">Genera el mismo formato institucional con el ciclo escolar, grado y grupo, docente titular y alumnos del grupo activo.</p><a href="/attendance/list.xlsx" style="display:inline-block;text-decoration:none;background:#7b1024;color:white;padding:11px 16px;border-radius:10px;font-weight:800">Generar lista de asistencia en Excel</a></div>'
             marker = '<form method="get" class="card">'
             html = html.replace(marker, button + marker, 1) if marker in html else html.replace('</main>', button + '</main>', 1)
             response.set_data(html)
