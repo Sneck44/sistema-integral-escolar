@@ -96,6 +96,12 @@ from avatar_global_fix import install as install_avatar_global_fix
 install_avatar_global_fix(app)
 from responsive_runtime import install as install_responsive_runtime
 install_responsive_runtime(app)
+
+# Suite aditiva con expediente, alertas, pendientes, reportes, tutoría,
+# convivencia, documentos, agenda, analítica, planeación y evidencias.
+from integral_suite import install as install_integral_suite
+install_integral_suite(app)
+
 from icon_system import install as install_icon_system
 install_icon_system(app)
 from login_animation import install as install_login_animation
