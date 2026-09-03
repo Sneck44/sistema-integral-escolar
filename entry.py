@@ -58,24 +58,18 @@ ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 from multi_user import install as install_multi_user
 install_multi_user(app)
 
-# Blindaje adicional: usuarios, solicitudes y autorización de grupos son exclusivos del administrador.
 from admin_user_security import install as install_admin_user_security
 install_admin_user_security(app)
 
-# Nueve entornos con la misma interfaz y datos independientes por grupo.
-# Se instala antes de los permisos docentes para fijar primero el grupo activo.
 from group_workspaces import install as install_group_workspaces
 install_group_workspaces(app)
 
-# Cada docente puede modificar únicamente el grupo que el administrador le asigne.
 from teacher_group_permissions import install as install_teacher_group_permissions
 install_teacher_group_permissions(app)
 
-# Ajusta la validación docente para trabajar con el grupo activo de su sesión.
 from teacher_workspace_fix import install as install_teacher_workspace_fix
 install_teacher_workspace_fix(app)
 
-# Gestión administrativa de solicitudes pendientes: rechazar, restaurar o eliminar.
 from request_actions import install as install_request_actions
 install_request_actions(app)
 
@@ -109,34 +103,30 @@ install_data_manager(app)
 from trimester_charts import install as install_trimester_charts
 install_trimester_charts(app)
 
-# Las exportaciones también muestran el grado y grupo del entorno activo.
 from group_export_fix import install as install_group_export_fix
 install_group_export_fix()
 
-# Cada docente captura su propio nombre; se usa en bienvenida y exportaciones del grupo.
 from teacher_identity import install as install_teacher_identity
 install_teacher_identity(app)
 
-# Genera desde Asistencia la lista institucional con datos del grupo activo.
 from attendance_list_export import install as install_attendance_list_export
 install_attendance_list_export(app)
 
-# Refuerzo visual para asegurar que el botón de lista aparezca en Asistencia.
 from attendance_ui_fix import install as install_attendance_ui_fix
 install_attendance_ui_fix(app)
 
-# Avatar personal desde cámara o generado con IA.
 from profile_avatar import install as install_profile_avatar
 install_profile_avatar(app)
 
-# Mantiene la foto de usuario en tamaño compacto en todas las pantallas.
 from avatar_global_fix import install as install_avatar_global_fix
 install_avatar_global_fix(app)
 
-# Sistema final de iconos: reemplaza símbolos/emojis por una familia SVG lineal uniforme.
+# Ajuste global responsive: mantiene navegación, formularios, tablas y acciones utilizables en móvil/tableta.
+from responsive_runtime import install as install_responsive_runtime
+install_responsive_runtime(app)
+
 from icon_system import install as install_icon_system
 install_icon_system(app)
 
-# Animación elegante y discreta del logotipo en la pantalla de inicio de sesión.
 from login_animation import install as install_login_animation
 install_login_animation(app)
