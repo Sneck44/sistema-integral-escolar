@@ -113,6 +113,10 @@ install_trimester_charts(app)
 from group_export_fix import install as install_group_export_fix
 install_group_export_fix()
 
+# Cada docente captura su propio nombre; se usa en bienvenida y exportaciones del grupo.
+from teacher_identity import install as install_teacher_identity
+install_teacher_identity(app)
+
 # Sistema final de iconos: reemplaza símbolos/emojis por una familia SVG lineal uniforme.
 from icon_system import install as install_icon_system
 install_icon_system(app)
