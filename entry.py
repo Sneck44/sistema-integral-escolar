@@ -68,6 +68,8 @@ from diagnostic import install as install_diagnostic
 install_diagnostic(app)
 from excel_exports import install as install_excel_exports
 install_excel_exports(app)
+from analysis_exports import install as install_analysis_exports
+install_analysis_exports()
 from excel_runtime_fix import install as install_excel_runtime_fix
 install_excel_runtime_fix()
 from activity_manager import install as install_activity_manager
