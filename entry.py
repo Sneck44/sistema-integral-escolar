@@ -39,8 +39,6 @@ def add_ios_app_icon(response):
 
 ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 
-# Se registra primero para que su after_request se ejecute al final y deje
-# definitivamente ordenado el menú y visible el gestor de logotipos.
 from admin_ui_finalizer import install as install_admin_ui_finalizer
 install_admin_ui_finalizer(app)
 
@@ -82,12 +80,10 @@ from group_export_fix import install as install_group_export_fix
 install_group_export_fix()
 from teacher_identity import install as install_teacher_identity
 install_teacher_identity(app)
-
 from document_logos import install as install_document_logos
 install_document_logos(app)
 from document_logo_exports import install as install_document_logo_exports
 install_document_logo_exports()
-
 from attendance_list_export import install as install_attendance_list_export
 install_attendance_list_export(app)
 from attendance_ui_fix import install as install_attendance_ui_fix
@@ -99,14 +95,15 @@ install_avatar_global_fix(app)
 from responsive_runtime import install as install_responsive_runtime
 install_responsive_runtime(app)
 
-# Suite aditiva con expediente, alertas, pendientes, reportes, tutoría,
-# convivencia, documentos, agenda, analítica, planeación y evidencias.
 from integral_suite import install as install_integral_suite
 install_integral_suite(app)
-
-# Hace visibles los 11 módulos desde escritorio, móvil, inicio y alumnos.
 from suite_navigation import install as install_suite_navigation
 install_suite_navigation(app)
+
+# Evaluación institucional de clubes y deportes: integrantes de toda la escuela,
+# asistencia, rúbrica, listas imprimibles e informes para el docente titular.
+from clubs_sports import install as install_clubs_sports
+install_clubs_sports(app)
 
 from icon_system import install as install_icon_system
 install_icon_system(app)
