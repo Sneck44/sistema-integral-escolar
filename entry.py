@@ -105,6 +105,11 @@ install_suite_navigation(app)
 from clubs_sports import install as install_clubs_sports
 install_clubs_sports(app)
 
+# Control administrativo: acceso visible para todos y edición limitada a un
+# club/deporte y grupo expresamente autorizados a cada docente.
+from clubs_permissions import install as install_clubs_permissions
+install_clubs_permissions(app)
+
 from icon_system import install as install_icon_system
 install_icon_system(app)
 from login_animation import install as install_login_animation
