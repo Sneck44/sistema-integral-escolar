@@ -89,8 +89,6 @@ def _inject_group_controls(html):
 
 
 def install(app):
-    # El modelo se crea con create_all al arrancar; este respaldo cubre despliegues
-    # donde el módulo se importa después del bootstrap inicial.
     try:
         with app.app_context():
             core.db.create_all()
@@ -106,10 +104,13 @@ def install(app):
         if not profile or not profile.active or profile.role != 'DOCENTE':
             return None
 
-        # La restricción solicitada aplica a modificaciones, no a consulta.
         if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
             return None
         if request.path.startswith('/account/password'):
+            return None
+        # Clubes y deportes tienen su propio control de autorización por docente,
+        # club/deporte y grupo, administrado desde el módulo correspondiente.
+        if request.path.startswith('/clubs'):
             return None
 
         access = _access(uid)
@@ -172,7 +173,6 @@ def install(app):
         if profile and profile.role == 'DOCENTE':
             access = _access(uid)
             label = escape(_group_label(access))
-            marker = '</small>'
             role_text = f'Rol: {escape(multi_user._role_label(profile.role))}'
             target = f'<small>{role_text}</small>'
             if target in html and 'Grupo autorizado:' not in html:
