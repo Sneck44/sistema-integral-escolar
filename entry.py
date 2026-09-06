@@ -100,6 +100,10 @@ install_integral_suite(app)
 from suite_navigation import install as install_suite_navigation
 install_suite_navigation(app)
 
+# Agenda académica: calendario SEP vigente, pendientes y recordatorios institucionales.
+from academic_agenda import install as install_academic_agenda
+install_academic_agenda(app)
+
 # Evaluación institucional de clubes y deportes: integrantes de toda la escuela,
 # asistencia, rúbrica, listas imprimibles e informes para el docente titular.
 from clubs_sports import install as install_clubs_sports
