@@ -1,3 +1,4 @@
+# Redeploy estable 2026-09-05: restaura la plantilla de acceso sin CSS incrustado en f-string.
 import calendar as cal
 import base64
 from datetime import date
