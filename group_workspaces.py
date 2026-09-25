@@ -18,7 +18,7 @@ GROUP_MAP = {code: (grade, group_name) for code, grade, group_name in GROUPS}
 # Datos que pertenecen a un grupo concreto. Usuarios, configuración institucional
 # y permisos quedan fuera porque son globales al sistema.
 SCOPED_TABLES = {
-    'student', 'student_details', 'student_diagnostic',
+    'student', 'student_details', 'student_diagnostic', 'sisat_assessment',
     'subject', 'activity', 'grade', 'attendance', 'incident',
     'rubric', 'rubric_assessment',
 }

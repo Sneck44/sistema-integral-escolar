@@ -66,6 +66,8 @@ from diagnostic import install as install_diagnostic
 install_diagnostic(app)
 from excel_imports import install as install_excel_imports
 install_excel_imports(app)
+from sisat import install as install_sisat
+install_sisat(app)
 from excel_exports import install as install_excel_exports
 install_excel_exports(app)
 from analysis_exports import install as install_analysis_exports

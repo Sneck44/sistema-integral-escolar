@@ -111,7 +111,7 @@ def install(app):
             if profile.role == 'CONSULTA':
                 flash('Tu cuenta es de solo consulta.')
                 return redirect(request.referrer or '/')
-            if profile.role in ('DIRECCION', 'USAER') and not path.startswith('/incidents'):
+            if profile.role in ('DIRECCION', 'USAER') and not (path.startswith('/incidents') or (profile.role == 'DIRECCION' and path.startswith('/sisat'))):
                 flash('Tu rol no permite modificar este módulo.')
                 return redirect(request.referrer or '/')
         return None
