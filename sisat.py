@@ -7,6 +7,7 @@ from html import escape
 
 import xlsxwriter
 from flask import request, redirect, session, flash, send_file
+from openpyxl import load_workbook
 
 import app as core
 
@@ -260,6 +261,102 @@ def _summary_rows(assessments, students):
     return rows
 
 
+def _parse_template_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        for pattern in ('%Y-%m-%d', '%d/%m/%Y'):
+            try:
+                return datetime.strptime(value.strip(), pattern).date()
+            except ValueError:
+                continue
+    raise ValueError('La fecha de aplicación no es válida.')
+
+
+def _import_capture_workbook(file_storage):
+    if not file_storage or not file_storage.filename:
+        raise ValueError('Selecciona un archivo Excel.')
+    if not file_storage.filename.lower().endswith('.xlsx'):
+        raise ValueError('El archivo debe estar en formato .xlsx.')
+    payload = file_storage.read(8 * 1024 * 1024 + 1)
+    if len(payload) > 8 * 1024 * 1024:
+        raise ValueError('El archivo excede el límite de 8 MB.')
+    try:
+        workbook = load_workbook(io.BytesIO(payload), data_only=False, read_only=False)
+    except Exception as exc:
+        raise ValueError('No fue posible abrir el archivo. Descarga un formato nuevo desde SiSAT.') from exc
+
+    required = {'Lectura', 'Escritura', 'Cálculo mental'}
+    if not required.issubset(workbook.sheetnames):
+        raise ValueError('El archivo no corresponde al formato SiSAT generado por la plataforma.')
+    students = core.Student.query.filter_by(status='ACTIVO').all()
+    student_map = {student.id: student for student in students}
+    imported = 0
+    ignored = 0
+
+    for sheet_name, skill_key in (('Lectura', 'lectura'), ('Escritura', 'escritura'), ('Cálculo mental', 'calculo')):
+        ws = workbook[sheet_name]
+        application_date = _parse_template_date(ws['H5'].value)
+        try:
+            visit = int(ws['K5'].value or 1)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f'La visita de la hoja {sheet_name} no es válida.') from exc
+        if visit < 1 or visit > 9:
+            raise ValueError(f'La visita de la hoja {sheet_name} debe estar entre 1 y 9.')
+        for row_number in range(8, ws.max_row + 1):
+            raw_id = ws.cell(row_number, 1).value
+            if raw_id in (None, ''):
+                continue
+            try:
+                student_id = int(raw_id)
+            except (TypeError, ValueError):
+                ignored += 1
+                continue
+            if student_id not in student_map:
+                ignored += 1
+                continue
+            observations_col = 18 if skill_key != 'calculo' else 16
+            observations = str(ws.cell(row_number, observations_col).value or '').strip()
+            scores = {}
+            if skill_key in ('lectura', 'escritura'):
+                mapping = {'BUENA': 3, 'REGULAR': 2, 'INADECUADA': 1}
+                values = [ws.cell(row_number, col).value for col in range(4, 15, 2)]
+                if not any(value not in (None, '') for value in values) and not observations:
+                    continue
+                for (key, _, _), value in zip(SKILLS[skill_key]['components'], values):
+                    normalized = str(value or '').strip().upper()
+                    if normalized and normalized not in mapping:
+                        raise ValueError(f'Valor no válido en {sheet_name}, fila {row_number}: {value}.')
+                    scores[key] = mapping.get(normalized, 0)
+                total = sum(scores.values())
+            else:
+                values = [ws.cell(row_number, col).value for col in range(4, 14)]
+                if not any(value not in (None, '') for value in values) and not observations:
+                    continue
+                for number, value in enumerate(values, start=1):
+                    normalized = str(value if value is not None else '').strip().upper()
+                    if normalized not in ('', '0', '1', '1V'):
+                        raise ValueError(f'Código no válido en Cálculo mental, fila {row_number}: {value}.')
+                    scores[f'P{number}'] = normalized or '0'
+                total = sum(1 for value in scores.values() if value in ('1', '1V'))
+            assessment = SisatAssessment.query.execution_options(group_scope_disabled=True).filter_by(student_id=student_id, skill=skill_key, application_date=application_date, visit=visit).first()
+            if not assessment:
+                assessment = SisatAssessment(student_id=student_id, skill=skill_key, application_date=application_date, visit=visit)
+            assessment.scores_json = json.dumps(scores, ensure_ascii=False)
+            assessment.total = total
+            assessment.level = _level(skill_key, total)
+            assessment.observations = observations
+            assessment.applied_by = session.get('uid')
+            core.db.session.add(assessment)
+            imported += 1
+    if not imported:
+        raise ValueError('El archivo no contiene resultados capturados.')
+    core.db.session.commit()
+    return imported, ignored
+
+
 def _export_workbook(scope, skill='', student_id=None):
     assessments = _all_assessments()
     students = _all_students()
@@ -276,7 +373,9 @@ def _export_workbook(scope, skill='', student_id=None):
         assessments = [row for row in assessments if row.skill == skill]
     rows = _summary_rows(assessments, students)
 
-    output = io.BytesIO(); wb = xlsxwriter.Workbook(output, {'in_memory': True})
+    output = io.BytesIO(); wb = xlsxwriter.Workbook(output, {'in_memory': True, 'strings_to_formulas': False, 'strings_to_urls': False})
+    school_config = core.cfg()
+    wb.set_properties({'title': 'Informe de resultados SiSAT', 'subject': 'Gráficas y concentrados institucionales', 'author': school_config.school or 'Sistema Integral Escolar'})
     title = wb.add_format({'bold': True, 'font_size': 16, 'font_color': '#FFFFFF', 'bg_color': '#7B1024', 'align': 'center', 'valign': 'vcenter'})
     header = wb.add_format({'bold': True, 'font_color': '#FFFFFF', 'bg_color': '#217346', 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'border': 1})
     cell = wb.add_format({'border': 1, 'valign': 'top'}); center = wb.add_format({'border': 1, 'align': 'center', 'valign': 'top'})
@@ -286,6 +385,7 @@ def _export_workbook(scope, skill='', student_id=None):
 
     ws = wb.add_worksheet('Resumen')
     ws.merge_range(0, 0, 0, 7, 'CONCENTRADO DE RESULTADOS SiSAT', title)
+    ws.merge_range(1, 0, 1, 7, f'{school_config.school or ""} · CCT {school_config.cct or "Sin registro"} · Ciclo {school_config.cycle or ""} · Emitido {date.today().strftime("%d/%m/%Y")}', wb.add_format({'align': 'center', 'italic': True, 'font_color': '#657085'}))
     ws.write_row(2, 0, ['Ámbito', 'Alumnos evaluados', 'Aplicaciones', 'Nivel esperado', 'En desarrollo', 'Requiere apoyo', 'Promedio lectura/escritura', 'Promedio cálculo'], header)
     unique_students = len({row['student_id'] for row in rows}); levels = {level: sum(1 for row in rows if row['level'] == level) for level in LEVEL_COLORS}
     lit = [row['total'] for row in rows if row['skill'] != 'Cálculo mental']; mental = [row['total'] for row in rows if row['skill'] == 'Cálculo mental']
@@ -298,13 +398,44 @@ def _export_workbook(scope, skill='', student_id=None):
         subset = [row for row in rows if row['skill'] == config['title']]
         if not subset: continue
         ws.write_row(out_row, 0, [config['title'], len(subset), sum(1 for row in subset if row['level']=='NIVEL ESPERADO'), sum(1 for row in subset if row['level']=='EN DESARROLLO'), sum(1 for row in subset if row['level']=='REQUIERE APOYO'), round(sum(row['total'] for row in subset)/len(subset),2)], center); out_row += 1
+    skill_start_row = 8
+    skill_end_row = out_row - 1
     if scope == 'school':
         out_row += 2; ws.write(out_row, 0, 'Resultados por grupo', header); out_row += 1
         ws.write_row(out_row, 0, ['Grupo', 'Alumnos evaluados', 'Aplicaciones', 'Nivel esperado', 'En desarrollo', 'Requiere apoyo', 'Promedio'], header); out_row += 1
         for group_code in sorted({row['group'] for row in rows if row['group']}):
             subset = [row for row in rows if row['group'] == group_code]
             ws.write_row(out_row, 0, [group_code, len({row['student_id'] for row in subset}), len(subset), sum(1 for row in subset if row['level']=='NIVEL ESPERADO'), sum(1 for row in subset if row['level']=='EN DESARROLLO'), sum(1 for row in subset if row['level']=='REQUIERE APOYO'), round(sum(row['total'] for row in subset)/len(subset),2)], center); out_row += 1
-    ws.set_column(0, 0, 30); ws.set_column(1, 7, 18); ws.freeze_panes(3, 0)
+    if rows:
+        distribution = wb.add_chart({'type': 'doughnut'})
+        distribution.add_series({
+            'name': 'Distribución general por nivel',
+            'categories': '=Resumen!$D$3:$F$3',
+            'values': '=Resumen!$D$4:$F$4',
+            'points': [{'fill': {'color': '#63BE7B'}}, {'fill': {'color': '#FFCE54'}}, {'fill': {'color': '#F8696B'}}],
+            'data_labels': {'percentage': True, 'category': True},
+        })
+        distribution.set_title({'name': 'Distribución general por nivel'})
+        distribution.set_legend({'none': True})
+        distribution.set_hole_size(48)
+        distribution.set_style(10)
+        ws.insert_chart('J2', distribution, {'x_scale': 1.12, 'y_scale': 1.05})
+    if skill_end_row >= skill_start_row:
+        skills_chart = wb.add_chart({'type': 'column'})
+        for col, name, color in ((2, 'Nivel esperado', '#63BE7B'), (3, 'En desarrollo', '#FFCE54'), (4, 'Requiere apoyo', '#F8696B')):
+            skills_chart.add_series({
+                'name': name,
+                'categories': ['Resumen', skill_start_row, 0, skill_end_row, 0],
+                'values': ['Resumen', skill_start_row, col, skill_end_row, col],
+                'fill': {'color': color}, 'border': {'none': True},
+            })
+        skills_chart.set_title({'name': 'Resultados por habilidad'})
+        skills_chart.set_y_axis({'name': 'Aplicaciones', 'major_gridlines': {'visible': False}, 'min': 0})
+        skills_chart.set_legend({'position': 'top'})
+        skills_chart.set_style(10)
+        ws.insert_chart('J19', skills_chart, {'x_scale': 1.22, 'y_scale': 1.1})
+    ws.set_column(0, 0, 30); ws.set_column(1, 7, 18); ws.set_column(9, 16, 13); ws.freeze_panes(3, 0)
+    ws.set_landscape(); ws.fit_to_pages(1, 1); ws.set_header(f'&C&BSiSAT · {school_config.school or ""}'); ws.set_footer('&LConfidencial&C&P de &N&R&D')
 
     detail = wb.add_worksheet('Detalle')
     detail.merge_range(0, 0, 0, 9, 'DETALLE DE RESULTADOS SiSAT', title)
@@ -365,6 +496,149 @@ def _export_workbook(scope, skill='', student_id=None):
     wb.close(); output.seek(0); return output
 
 
+def _capture_template_workbook(students, group_code):
+    """Build an Excel capture template with formulas and official SiSAT bands."""
+    output = io.BytesIO()
+    wb = xlsxwriter.Workbook(output, {'in_memory': True, 'strings_to_formulas': False, 'strings_to_urls': False})
+    wb.set_properties({
+        'title': f'Formato automatizado SiSAT · Grupo {group_code}',
+        'subject': 'Captura de resultados de lectura, escritura y cálculo mental',
+        'author': 'Sistema Integral Escolar',
+        'comments': 'Las celdas amarillas son editables; puntajes y niveles se calculan automáticamente.',
+    })
+    config = core.cfg()
+    last_data_row = max(7, 7 + len(students) - 1)
+
+    title = wb.add_format({'bold': True, 'font_size': 15, 'font_color': '#172033', 'bottom': 2, 'bottom_color': '#7B1024'})
+    subtitle = wb.add_format({'italic': True, 'font_color': '#657085'})
+    meta_label = wb.add_format({'bold': True, 'font_color': '#7B1024'})
+    meta_value = wb.add_format({'bottom': 1, 'bottom_color': '#AAB4C3'})
+    input_meta = wb.add_format({'bg_color': '#FFF0C9', 'border': 1, 'border_color': '#D8B861', 'locked': False, 'num_format': 'dd/mm/yyyy'})
+    input_visit = wb.add_format({'bg_color': '#FFF0C9', 'border': 1, 'border_color': '#D8B861', 'locked': False, 'align': 'center'})
+    header = wb.add_format({'bold': True, 'font_color': '#FFFFFF', 'bg_color': '#217346', 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'border': 1, 'border_color': '#FFFFFF'})
+    subheader = wb.add_format({'bold': True, 'font_color': '#FFFFFF', 'bg_color': '#4F7D65', 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'border': 1, 'border_color': '#FFFFFF'})
+    identity = wb.add_format({'valign': 'vcenter', 'bottom': 1, 'bottom_color': '#DDE3EA'})
+    input_text = wb.add_format({'bg_color': '#FFF8DC', 'align': 'center', 'valign': 'vcenter', 'locked': False, 'bottom': 1, 'bottom_color': '#E8D89A'})
+    input_notes = wb.add_format({'bg_color': '#FFF8DC', 'valign': 'top', 'text_wrap': True, 'locked': False, 'bottom': 1, 'bottom_color': '#E8D89A'})
+    formula_num = wb.add_format({'align': 'center', 'valign': 'vcenter', 'bold': True, 'bg_color': '#F1F5F9', 'bottom': 1, 'bottom_color': '#DDE3EA'})
+    formula_level = wb.add_format({'align': 'center', 'valign': 'vcenter', 'bold': True, 'text_wrap': True, 'bg_color': '#F1F5F9', 'bottom': 1, 'bottom_color': '#DDE3EA'})
+    note = wb.add_format({'font_color': '#657085', 'italic': True, 'text_wrap': True})
+    rubric_cell = wb.add_format({'valign': 'top', 'text_wrap': True, 'bottom': 1, 'bottom_color': '#DDE3EA'})
+    pct = wb.add_format({'align': 'center', 'num_format': '0.0%'})
+    integer = wb.add_format({'align': 'center', 'num_format': '0'})
+
+    def setup_sheet(ws, skill_title, last_col):
+        ws.hide_gridlines(2)
+        ws.merge_range(0, 1, 0, last_col, f'FORMATO AUTOMATIZADO SiSAT · {skill_title.upper()}', title)
+        ws.merge_range(1, 1, 1, last_col, 'Capture únicamente las celdas amarillas. Los puntajes y el nivel se calculan de forma automática.', subtitle)
+        ws.write(3, 1, 'Escuela:', meta_label); ws.merge_range(3, 2, 3, 5, config.school or '', meta_value)
+        ws.write(3, 6, 'CCT:', meta_label); ws.merge_range(3, 7, 3, 8, config.cct or '', meta_value)
+        ws.write(4, 1, 'Ciclo:', meta_label); ws.write(4, 2, config.cycle or '', meta_value)
+        ws.write(4, 3, 'Grupo:', meta_label); ws.write(4, 4, group_code, meta_value)
+        ws.write(4, 6, 'Fecha:', meta_label); ws.write_datetime(4, 7, datetime.combine(date.today(), datetime.min.time()), input_meta)
+        ws.write(4, 9, 'Visita:', meta_label); ws.write_number(4, 10, 1, input_visit)
+        ws.data_validation(4, 10, 4, 10, {'validate': 'integer', 'criteria': 'between', 'minimum': 1, 'maximum': 9, 'input_title': 'Número de visita', 'input_message': 'Capture un valor del 1 al 9.'})
+        ws.set_row(0, 25); ws.set_row(1, 30); ws.set_row(6, 48)
+        ws.freeze_panes(7, 3)
+        ws.autofilter(6, 1, last_data_row, last_col)
+        ws.set_landscape(); ws.fit_to_pages(1, 0); ws.repeat_rows(0, 6)
+
+    def add_level_formatting(ws, col):
+        for level, color in LEVEL_COLORS.items():
+            ws.conditional_format(7, col, last_data_row, col, {'type': 'text', 'criteria': 'containing', 'value': level, 'format': wb.add_format({'bg_color': color, 'bold': True, 'font_color': '#172033'})})
+
+    for skill_key, sheet_name in (('lectura', 'Lectura'), ('escritura', 'Escritura')):
+        ws = wb.add_worksheet(sheet_name)
+        setup_sheet(ws, SKILLS[skill_key]['title'], 17)
+        headers = ['ID', 'No.', 'Alumno']
+        for _, label, _ in SKILLS[skill_key]['components']:
+            headers.extend([label, 'Puntos'])
+        headers.extend(['Total', 'Resultado', 'Observaciones'])
+        ws.write_row(6, 0, headers, header)
+        for component_index in range(6):
+            ws.write(6, 3 + component_index * 2, headers[3 + component_index * 2], header)
+            ws.write(6, 4 + component_index * 2, 'Puntos', subheader)
+        for offset, student in enumerate(students):
+            row = 7 + offset; excel_row = row + 1
+            ws.write_number(row, 0, student.id, identity)
+            ws.write(row, 1, student.list_no or '', identity)
+            ws.write(row, 2, student.full_name, identity)
+            score_cells = []
+            for index in range(6):
+                input_col = 3 + index * 2; score_col = input_col + 1
+                input_letter = xlsxwriter.utility.xl_col_to_name(input_col)
+                score_letter = xlsxwriter.utility.xl_col_to_name(score_col)
+                ws.write_blank(row, input_col, None, input_text)
+                ws.write_formula(row, score_col, f'=IF({input_letter}{excel_row}="","",IF({input_letter}{excel_row}="BUENA",3,IF({input_letter}{excel_row}="REGULAR",2,1)))', formula_num, '')
+                score_cells.append(f'{score_letter}{excel_row}')
+            input_refs = ','.join(f'{xlsxwriter.utility.xl_col_to_name(3 + i * 2)}{excel_row}' for i in range(6))
+            ws.write_formula(row, 15, f'=IF(COUNTA({input_refs})=0,"",SUM({",".join(score_cells)}))', formula_num, '')
+            ws.write_formula(row, 16, f'=IF(P{excel_row}="","",IF(P{excel_row}>=15,"NIVEL ESPERADO",IF(P{excel_row}>=10,"EN DESARROLLO","REQUIERE APOYO")))', formula_level, '')
+            ws.write_blank(row, 17, None, input_notes)
+            ws.set_row(row, 34)
+        # Apply validation only to the six editable rubric columns.
+        for col in range(3, 14, 2):
+            ws.data_validation(7, col, last_data_row, col, {'validate': 'list', 'source': ['BUENA', 'REGULAR', 'INADECUADA'], 'input_title': 'Valoración', 'input_message': 'Elija BUENA, REGULAR o INADECUADA.', 'error_title': 'Valor no permitido', 'error_message': 'Seleccione una opción de la lista.'})
+        ws.set_column(0, 0, 2, None, {'hidden': True}); ws.set_column(1, 1, 7); ws.set_column(2, 2, 32)
+        for col in range(3, 15, 2): ws.set_column(col, col, 19)
+        for col in range(4, 15, 2): ws.set_column(col, col, 8)
+        ws.set_column(15, 15, 8); ws.set_column(16, 16, 19); ws.set_column(17, 17, 32)
+        add_level_formatting(ws, 16)
+        ws.protect('', {'select_locked_cells': True, 'select_unlocked_cells': True, 'sort': True, 'autofilter': True})
+
+    mental = wb.add_worksheet('Cálculo mental')
+    setup_sheet(mental, SKILLS['calculo']['title'], 15)
+    mental.write_row(6, 0, ['ID', 'No.', 'Alumno'] + [f'P{i}' for i in range(1, 11)] + ['Total', 'Resultado', 'Observaciones'], header)
+    for offset, student in enumerate(students):
+        row = 7 + offset; excel_row = row + 1
+        mental.write_number(row, 0, student.id, identity); mental.write(row, 1, student.list_no or '', identity); mental.write(row, 2, student.full_name, identity)
+        for col in range(3, 13): mental.write_blank(row, col, None, input_text)
+        mental.write_formula(row, 13, f'=IF(COUNTA(D{excel_row}:M{excel_row})=0,"",COUNTIF(D{excel_row}:M{excel_row},"1")+COUNTIF(D{excel_row}:M{excel_row},"1V"))', formula_num, '')
+        mental.write_formula(row, 14, f'=IF(N{excel_row}="","",IF(N{excel_row}>=8,"NIVEL ESPERADO",IF(N{excel_row}>=5,"EN DESARROLLO","REQUIERE APOYO")))', formula_level, '')
+        mental.write_blank(row, 15, None, input_notes); mental.set_row(row, 34)
+    mental.data_validation(7, 3, last_data_row, 12, {'validate': 'list', 'source': ['1', '1V', '0'], 'input_title': 'Código', 'input_message': '1 = correcta; 1V = correcta con apoyo visual; 0 = incorrecta.'})
+    mental.set_column(0, 0, 2, None, {'hidden': True}); mental.set_column(1, 1, 7); mental.set_column(2, 2, 32); mental.set_column(3, 12, 7); mental.set_column(13, 13, 8); mental.set_column(14, 14, 19); mental.set_column(15, 15, 32)
+    add_level_formatting(mental, 14)
+    mental.protect('', {'select_locked_cells': True, 'select_unlocked_cells': True, 'sort': True, 'autofilter': True})
+
+    summary = wb.add_worksheet('Resumen')
+    summary.hide_gridlines(2); summary.set_tab_color('#7B1024')
+    summary.merge_range('A1:G1', 'RESUMEN AUTOMÁTICO DE RESULTADOS SiSAT', title)
+    summary.merge_range('A2:G2', f'{config.school or ""} · {config.cct or "Sin CCT"} · Ciclo {config.cycle or ""} · Grupo {group_code}', subtitle)
+    summary.write_row('A5', ['Habilidad', 'Alumnos capturados', 'Nivel esperado', 'En desarrollo', 'Requiere apoyo', '% esperado', 'Promedio'], header)
+    summary_rows = [('Lectura', 'Q', 'P'), ('Escritura', 'Q', 'P'), ('Cálculo mental', 'O', 'N')]
+    for row_index, (sheet_name, level_col, total_col) in enumerate(summary_rows, start=5):
+        first_excel, last_excel = 8, last_data_row + 1
+        summary.write(row_index, 0, sheet_name, identity)
+        summary.write_formula(row_index, 1, f'=COUNT({sheet_name!r}!{total_col}{first_excel}:{total_col}{last_excel})', integer, 0)
+        summary.write_formula(row_index, 2, f'=COUNTIF({sheet_name!r}!{level_col}{first_excel}:{level_col}{last_excel},"NIVEL ESPERADO")', integer, 0)
+        summary.write_formula(row_index, 3, f'=COUNTIF({sheet_name!r}!{level_col}{first_excel}:{level_col}{last_excel},"EN DESARROLLO")', integer, 0)
+        summary.write_formula(row_index, 4, f'=COUNTIF({sheet_name!r}!{level_col}{first_excel}:{level_col}{last_excel},"REQUIERE APOYO")', integer, 0)
+        summary.write_formula(row_index, 5, f'=IF(B{row_index+1}=0,"",C{row_index+1}/B{row_index+1})', pct, '')
+        summary.write_formula(row_index, 6, f'=IF(B{row_index+1}=0,"",AVERAGE({sheet_name!r}!{total_col}{first_excel}:{total_col}{last_excel}))', wb.add_format({'align': 'center', 'num_format': '0.00'}), '')
+    summary.write('A11', 'Lectura y escritura: 15–18 Nivel esperado · 10–14 En desarrollo · 0–9 Requiere apoyo.', note)
+    summary.write('A12', 'Cálculo mental: 8–10 Nivel esperado · 5–7 En desarrollo · 0–4 Requiere apoyo.', note)
+    summary.set_column('A:A', 28); summary.set_column('B:E', 18); summary.set_column('F:G', 14); summary.set_row(4, 34)
+    summary.conditional_format('C6:C8', {'type': 'data_bar', 'bar_color': '#63BE7B'}); summary.conditional_format('E6:E8', {'type': 'data_bar', 'bar_color': '#F8696B'})
+
+    rubric = wb.add_worksheet('Rúbricas')
+    rubric.hide_gridlines(2); rubric.set_tab_color('#657085')
+    rubric.merge_range('A1:F1', 'RÚBRICAS Y CRITERIOS DE VALORACIÓN', title)
+    rubric.write_row('A3', ['Habilidad', 'Componente', 'BUENA · 3 puntos', 'REGULAR · 2 puntos', 'INADECUADA · 1 punto', 'Rango global'], header)
+    rubric_row = 3
+    for skill_key in ('lectura', 'escritura'):
+        for key, label_text, descriptors in SKILLS[skill_key]['components']:
+            rubric.write_row(rubric_row, 0, [SKILLS[skill_key]['title'], label_text, f'{descriptors[0]}. {RUBRIC_GUIDANCE[skill_key][key][3]}', f'{descriptors[1]}. {RUBRIC_GUIDANCE[skill_key][key][2]}', f'{descriptors[2]}. {RUBRIC_GUIDANCE[skill_key][key][1]}', '15–18: Nivel esperado\n10–14: En desarrollo\n0–9: Requiere apoyo'], rubric_cell)
+            rubric.set_row(rubric_row, 88); rubric_row += 1
+    rubric.write_row(rubric_row, 0, ['Cálculo mental', 'Códigos', '1 = correcta sin apoyo visual', '1V = correcta con apoyo visual', '0 = equivocada o sin respuesta', '8–10: Nivel esperado\n5–7: En desarrollo\n0–4: Requiere apoyo'], rubric_cell)
+    rubric.set_row(rubric_row, 58); rubric.set_column('A:B', 26); rubric.set_column('C:E', 47); rubric.set_column('F:F', 28); rubric.freeze_panes(3, 2)
+
+    # Open the workbook on its reader-facing summary.
+    summary.activate(); summary.select()
+    wb.close(); output.seek(0)
+    return output
+
+
 def install(app):
     try:
         with app.app_context(): core.db.create_all()
@@ -385,9 +659,49 @@ def install(app):
         export_block = ''
         if _can_export():
             student_options = ''.join(f'<option value="{s.id}">{escape(s.full_name)}</option>' for s in students)
-            export_block = f'''<div class="card"><h2>Exportar resultados</h2><p class="muted">Administración y Dirección pueden generar concentrados por escuela, grupo activo o alumno.</p><form method="get" action="/sisat/export.xlsx" class="grid"><label>Ámbito<select name="scope" id="sisat-scope" onchange="document.getElementById('sisat-student').style.display=this.value==='student'?'block':'none'"><option value="school">Toda la escuela</option><option value="group">Grupo {group}</option><option value="student">Alumno</option></select></label><label>Habilidad<select name="skill"><option value="">Todas</option>{''.join(f'<option value="{k}">{escape(v["title"])}</option>' for k,v in SKILLS.items())}</select></label><label id="sisat-student" style="display:none">Alumno<select name="student_id">{student_options}</select></label><div><button>Exportar Excel</button></div></form></div>'''
-        body = f'''<h1>SiSAT · Grupo {group}</h1><p class="muted">Exploración de habilidades básicas en lectura, producción de textos escritos y cálculo mental.</p><div class="grid">{cards}</div><div class="card"><h2>Prueba de cálculo mental</h2><p>Genera diez reactivos aleatorios con el mismo nivel y tipo de habilidad que los instrumentos oficiales de cada grado.</p><a href="/sisat/mental-test" class="sisat-btn">Generar prueba</a></div>{export_block}<style>.sisat-btn{{display:inline-block;background:#7b1024;color:white;text-decoration:none;padding:10px 14px;border-radius:9px;font-weight:800}}</style>'''
+            export_block = f'''<div class="card"><h2>Informe gráfico y concentrado</h2><p class="muted">Administración y Dirección pueden generar un archivo institucional con encabezado predeterminado, gráficas y resultados por escuela, grupo o alumno.</p><form method="get" action="/sisat/export.xlsx" class="grid"><label>Ámbito<select name="scope" id="sisat-scope" onchange="document.getElementById('sisat-student').style.display=this.value==='student'?'block':'none'"><option value="school">Toda la escuela</option><option value="group">Grupo {group}</option><option value="student">Alumno</option></select></label><label>Habilidad<select name="skill"><option value="">Todas</option>{''.join(f'<option value="{k}">{escape(v["title"])}</option>' for k,v in SKILLS.items())}</select></label><label id="sisat-student" style="display:none">Alumno<select name="student_id">{student_options}</select></label><div><button>Generar informe Excel</button></div></form></div>'''
+        template_block = ''
+        if _can_capture():
+            template_block = f'''<div class="card"><h2>Formato automatizado de captura</h2><p>Descarga un Excel del grupo {group} con los alumnos precargados, listas desplegables, puntajes, niveles y resumen automático.</p><a href="/sisat/formato-captura.xlsx" class="sisat-btn">Descargar formato Excel</a><p class="muted">Incluye lectura, escritura, cálculo mental y las rúbricas oficiales.</p><hr style="border:0;border-top:1px solid #e8edf4;margin:18px 0"><h3>Importar resultados</h3><p class="muted">Después de llenar el formato, selecciónalo para guardar los resultados en la plataforma.</p><form method="post" action="/sisat/importar-formato" enctype="multipart/form-data" class="grid"><label>Archivo Excel<input type="file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label><div><button>Importar resultados</button></div></form></div>'''
+        materials_block = ''
+        if _can_capture():
+            materials_block = '''<div class="card"><h2>Actividades nuevas en PDF</h2><p>Genera lecturas originales con preguntas graduadas o ejercicios de escritura que permiten observar todos los componentes de las rúbricas.</p><a href="/sisat/materiales" class="sisat-btn">Generar actividades PDF</a></div>'''
+        body = f'''<h1>SiSAT · Grupo {group}</h1><p class="muted">Exploración de habilidades básicas en lectura, producción de textos escritos y cálculo mental.</p><div class="grid">{cards}</div>{template_block}{materials_block}<div class="card"><h2>Prueba de cálculo mental</h2><p>Genera diez reactivos aleatorios con el mismo nivel y tipo de habilidad que los instrumentos oficiales de cada grado.</p><a href="/sisat/mental-test" class="sisat-btn">Generar prueba</a></div>{export_block}<style>.sisat-btn{{display:inline-block;background:#7b1024;color:white;text-decoration:none;padding:10px 14px;border-radius:9px;font-weight:800}}</style>'''
         return core.page('SiSAT', body)
+
+    @app.route('/sisat/formato-captura.xlsx')
+    def sisat_capture_template():
+        if not session.get('uid'): return redirect('/login')
+        if not _can_capture():
+            flash('Tu rol no permite generar formatos de captura SiSAT.')
+            return redirect('/sisat')
+        group = _active_group()
+        students = core.Student.query.filter_by(status='ACTIVO').order_by(core.Student.list_no, core.Student.paternal).all()
+        output = _capture_template_workbook(students, group)
+        safe_group = ''.join(char for char in group if char.isalnum() or char in ('-', '_')) or 'grupo'
+        return send_file(output, as_attachment=True, download_name=f'formato_sisat_{safe_group}_{date.today().isoformat()}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    @app.route('/sisat/importar-formato', methods=['POST'])
+    def sisat_import_template():
+        if not session.get('uid'): return redirect('/login')
+        if not _can_capture():
+            flash('Tu rol no permite importar resultados SiSAT.')
+            return redirect('/sisat')
+        try:
+            imported, ignored = _import_capture_workbook(request.files.get('file'))
+        except ValueError as exc:
+            core.db.session.rollback()
+            flash(str(exc))
+            return redirect('/sisat')
+        except Exception:
+            core.db.session.rollback()
+            flash('No fue posible importar el archivo. Verifica que sea un formato SiSAT válido.')
+            return redirect('/sisat')
+        message = f'Se importaron {imported} registros SiSAT correctamente.'
+        if ignored:
+            message += f' Se omitieron {ignored} filas que no pertenecen al grupo activo.'
+        flash(message)
+        return redirect('/sisat')
 
     @app.route('/sisat/capture/<skill>', methods=['GET', 'POST'])
     def sisat_capture(skill):
