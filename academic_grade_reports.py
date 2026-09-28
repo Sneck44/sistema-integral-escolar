@@ -184,6 +184,124 @@ def _diagnostic_workbook():
     return out
 
 
+
+def _direction_workbook(trimester):
+    """Formato de entrega a Dirección: una hoja general y una por asignatura."""
+    students, subjects, activity_map, values = _subject_averages(trimester)
+    out = io.BytesIO()
+    wb = xlsxwriter.Workbook(out, {'in_memory': True})
+    f = _formats(wb)
+    heading = wb.add_format({'bold': True, 'font_size': 12, 'align': 'center', 'font_color': '#7B1024'})
+    label = wb.add_format({'bold': True, 'font_size': 9})
+    sig = wb.add_format({'bold': True, 'align': 'center', 'font_size': 9})
+    warning = wb.add_format({'font_color': '#8C4513', 'italic': True, 'text_wrap': True})
+    used_names = set()
+
+    def layout(ws, title, final_col):
+        ws.set_landscape()
+        ws.set_paper(1)
+        ws.fit_to_pages(1, 0)
+        ws.set_margins(.28, .28, .4, .4)
+        ws.set_column(0, 0, 7)
+        ws.set_column(1, 1, 38)
+        ws.set_column(2, final_col, 15)
+        ws.merge_range(0, 0, 0, final_col, core.cfg().school.upper(), heading)
+        ws.merge_range(1, 0, 1, final_col, 'CONCENTRADO DE CALIFICACIONES PARA DIRECCIÓN', heading)
+        ws.merge_range(2, 0, 2, final_col, f'CCT: {core.cfg().cct}   |   CICLO: {core.cfg().cycle}   |   GRUPO: {_context()}', f['meta'])
+        ws.merge_range(3, 0, 3, final_col, f'{trimester}   |   {title}', f['meta'])
+        ws.set_row(5, 34)
+        ws.freeze_panes(6, 2)
+        ws.repeat_rows(0, 5)
+
+    def signatures(ws, row, final_col):
+        ws.merge_range(row + 2, 0, row + 2, final_col, 'Documento de trabajo: verificar y validar las calificaciones antes de su entrega oficial.', warning)
+        ws.merge_range(row + 4, 0, row + 4, max(1, final_col // 2), '____________________________________', sig)
+        ws.merge_range(row + 4, max(2, final_col // 2 + 1), row + 4, final_col, '____________________________________', sig)
+        ws.merge_range(row + 5, 0, row + 5, max(1, final_col // 2), 'DOCENTE TITULAR', sig)
+        ws.merge_range(row + 5, max(2, final_col // 2 + 1), row + 5, final_col, 'Vo. Bo. DIRECCIÓN', sig)
+        ws.print_area(0, 0, row + 6, final_col)
+
+    ws = wb.add_worksheet('CONCENTRADO GENERAL')
+    last = len(subjects) + 2
+    layout(ws, 'Todas las asignaturas', last)
+    ws.write(5, 0, 'N/P', f['head'])
+    ws.write(5, 1, 'NOMBRE DEL ALUMNO', f['head'])
+    for j, subject in enumerate(subjects, 2):
+        ws.write(5, j, subject.name, f['head'])
+    ws.write(5, last, 'PROMEDIO', f['head'])
+    for i, student in enumerate(students, 6):
+        ws.write(i, 0, student.list_no if student.list_no is not None else i - 5, f['num'])
+        ws.write(i, 1, student.full_name.upper(), f['name'])
+        nums = []
+        for j, subject in enumerate(subjects, 2):
+            score = values.get((student.id, subject.id))
+            if score is None:
+                ws.write_blank(i, j, None, f['num'])
+            else:
+                ws.write_number(i, j, score, f['score'])
+                nums.append(score)
+        if nums:
+            ws.write_number(i, last, round(sum(nums) / len(nums), 2), f['summary'])
+        else:
+            ws.write_blank(i, last, None, f['summary'])
+    end = 6 + len(students)
+    ws.write(end, 1, 'PROMEDIO DEL GRUPO', f['head'])
+    for j, subject in enumerate(subjects, 2):
+        nums = [values[(s.id, subject.id)] for s in students if values.get((s.id, subject.id)) is not None]
+        if nums:
+            ws.write_number(end, j, round(sum(nums) / len(nums), 2), f['summary'])
+        else:
+            ws.write_blank(end, j, None, f['summary'])
+    general = []
+    for student in students:
+        nums = [values[(student.id, sub.id)] for sub in subjects if values.get((student.id, sub.id)) is not None]
+        if nums:
+            general.append(sum(nums) / len(nums))
+    if general:
+        ws.write_number(end, last, round(sum(general) / len(general), 2), f['summary'])
+    ws.merge_range(end + 1, 0, end + 1, last, 'Sin evidencia: celda vacía. Promedios calculados con actividades y exámenes calificados; no son calificaciones oficialmente validadas.', warning)
+    signatures(ws, end + 2, last)
+
+    for index, subject in enumerate(subjects, 1):
+        base = ''.join(ch for ch in subject.name if ch not in '[]:*?/\\')[:24].strip() or 'Asignatura'
+        name = f'{index:02d} {base}'[:31]
+        while name in used_names:
+            name = f'{index:02d} {base[:19]}-{len(used_names)}'[:31]
+        used_names.add(name)
+        ws = wb.add_worksheet(name)
+        layout(ws, subject.name, 4)
+        for col, label_text in enumerate(['N/P', 'NOMBRE DEL ALUMNO', 'PROMEDIO', 'EVIDENCIAS', 'ESTADO']):
+            ws.write(5, col, label_text, f['head'])
+        valid_activities = activity_map.get(subject.id, [])
+        for i, student in enumerate(students, 6):
+            ws.write(i, 0, student.list_no if student.list_no is not None else i - 5, f['num'])
+            ws.write(i, 1, student.full_name.upper(), f['name'])
+            value = values.get((student.id, subject.id))
+            if value is not None:
+                ws.write_number(i, 2, value, f['score'])
+            else:
+                ws.write_blank(i, 2, None, f['num'])
+            # Conteo sólo de evidencias con calificación numérica.
+            graded = core.Grade.query.filter(
+                core.Grade.student_id == student.id,
+                core.Grade.activity_id.in_([a.id for a in valid_activities]),
+                core.Grade.score.isnot(None),
+            ).count() if valid_activities else 0
+            ws.write_number(i, 3, graded, f['num'])
+            ws.write(i, 4, 'CAPTURADA' if graded else 'SIN REGISTRO', f['name'])
+        end = 6 + len(students)
+        nums = [values[(s.id, subject.id)] for s in students if values.get((s.id, subject.id)) is not None]
+        ws.write(end, 1, 'PROMEDIO DEL GRUPO', f['head'])
+        if nums:
+            ws.write_number(end, 2, round(sum(nums) / len(nums), 2), f['summary'])
+        ws.merge_range(end + 1, 0, end + 1, 4, f'Actividades/exámenes configurados: {len(valid_activities)}. La ausencia de captura no se convierte en cero.', warning)
+        signatures(ws, end + 2, 4)
+
+    wb.close()
+    out.seek(0)
+    return out
+
+
 def install(app):
     @app.route('/quarterly-grades')
     def quarterly_grades():
@@ -204,10 +322,24 @@ def install(app):
             rows += f'<tr><td>{escape(str(s.list_no or ""))}</td><td>{escape(s.full_name)}</td>{cells}<td><b>{"—" if avg is None else f"{avg:.2f}"}</b></td></tr>'
         summary = ''.join(f'<td>{"—" if not (v := [values[(s.id, sub.id)] for s in students if values.get((s.id, sub.id)) is not None]) else f"{sum(v)/len(v):.2f}"}</td>' for sub in subjects)
         body = f'''<h1>Calificaciones trimestrales · {escape(_context())}</h1>
-        <div class="card"><form method="get" style="display:flex;align-items:end;gap:12px;flex-wrap:wrap"><label>Trimestre<select name="trimester">{options}</select></label><button style="width:auto">Consultar</button><a href="/quarterly-grades.xlsx?trimester={escape(trimester)}" style="padding:11px 15px;background:#217346;color:white;border-radius:9px;text-decoration:none;font-weight:bold">Exportar Excel</a></form>
+        <div class="card"><form method="get" style="display:flex;align-items:end;gap:12px;flex-wrap:wrap"><label>Trimestre<select name="trimester">{options}</select></label><button style="width:auto">Consultar</button><a href="/quarterly-grades.xlsx?trimester={escape(trimester)}" style="padding:11px 15px;background:#217346;color:white;border-radius:9px;text-decoration:none;font-weight:bold">Exportar Excel</a><a href="/quarterly-grades/direction.xlsx?trimester={escape(trimester)}" style="padding:11px 15px;background:#7b1024;color:white;border-radius:9px;text-decoration:none;font-weight:bold">Formato para Dirección · por asignatura</a></form>
         <p class="muted">Cada actividad o examen registrado se normaliza a 0–10; el promedio por asignatura es la media de sus actividades calificadas. El promedio general es la media de las asignaturas con evidencia. No se imputan ceros por registros faltantes.</p></div>
         <div class="card scroll"><table><tr><th>N/P</th><th>Alumno</th>{headers}<th>Promedio</th></tr>{rows}<tr><th></th><th>Promedio del grupo</th>{summary}<th></th></tr></table></div>'''
         return core.page('Calificaciones trimestrales', body)
+
+    @app.route('/quarterly-grades/direction.xlsx')
+    def quarterly_grades_direction_excel():
+        if not session.get('uid'):
+            return redirect('/login')
+        trimester = request.args.get('trimester', TRIMESTERS[0])
+        if trimester not in TRIMESTERS:
+            trimester = TRIMESTERS[0]
+        return send_file(
+            _direction_workbook(trimester),
+            as_attachment=True,
+            download_name=f'Entrega_Direccion_{_context().replace(" ", "")}_{trimester.replace(" ", "_")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
 
     @app.route('/quarterly-grades.xlsx')
     def quarterly_grades_excel():
