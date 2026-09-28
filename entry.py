@@ -64,6 +64,8 @@ from whatsapp_group import install as install_whatsapp_group
 install_whatsapp_group(app)
 from diagnostic import install as install_diagnostic
 install_diagnostic(app)
+from academic_grade_reports import install as install_academic_grade_reports
+install_academic_grade_reports(app)
 from excel_imports import install as install_excel_imports
 install_excel_imports(app)
 from sisat import install as install_sisat
