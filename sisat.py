@@ -773,13 +773,30 @@ def install(app):
         questions=_mental_questions(grade); practice=_practice_questions(grade); config=core.cfg(); output=io.BytesIO()
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import cm
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-        styles=getSampleStyleSheet(); doc=SimpleDocTemplate(output,pagesize=letter,rightMargin=1.4*cm,leftMargin=1.4*cm,topMargin=1.3*cm,bottomMargin=1.3*cm)
-        story=[Paragraph('CÁLCULO MENTAL · '+grade+'.º DE SECUNDARIA',styles['Title']),Paragraph(escape(config.school)+' · CCT '+escape(config.cct or 'Sin registro')+' · Ciclo '+escape(config.cycle or ''),styles['Normal']),Spacer(1,8),Paragraph('Aplicación individual. Plantee cada pregunta de forma oral. Muestre apoyo visual únicamente conforme al procedimiento SiSAT.',styles['BodyText']),Spacer(1,8)]
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
+        styles=getSampleStyleSheet()
+        card=ParagraphStyle('Card',parent=styles['Title'],fontName='Helvetica-Bold',fontSize=28,leading=34,alignment=1,textColor=colors.HexColor('#1F2937'))
+        doc=SimpleDocTemplate(output,pagesize=letter,rightMargin=1.4*cm,leftMargin=1.4*cm,topMargin=1.3*cm,bottomMargin=1.3*cm)
+        story=[Paragraph('CÁLCULO MENTAL · '+grade+'.º DE SECUNDARIA',styles['Title']),Paragraph(escape(config.school)+' · CCT '+escape(config.cct or 'Sin registro')+' · Ciclo '+escape(config.cycle or ''),styles['Normal']),Spacer(1,8),Paragraph('Aplicación individual. Plantee cada pregunta de forma oral. Muestre las tarjetas únicamente cuando corresponda al apoyo visual del procedimiento.',styles['BodyText']),Spacer(1,8)]
         rows=[['No.','Pregunta']]+[['Ej. '+str(i),Paragraph(escape(q),styles['BodyText'])] for i,(q,a) in enumerate(practice,1)]+[[str(q['number']),Paragraph(escape(q['prompt']),styles['BodyText'])] for q in questions]
-        table=Table(rows,colWidths=[1.6*cm,16.4*cm],repeatRows=1); table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#7B1024')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('ALIGN',(0,0),(0,-1),'CENTER'),('GRID',(0,0),(-1,-1),0.35,colors.HexColor('#D8D0D2')),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),6),('BOTTOMPADDING',(0,0),(-1,-1),6)])); story.extend([table,Spacer(1,8),Paragraph('Códigos de registro: 1 correcta sin apoyo visual · 1V correcta con apoyo visual · 0 equivocada o sin respuesta.',styles['BodyText'])]); doc.build(story); output.seek(0)
+        table=Table(rows,colWidths=[1.6*cm,16.4*cm],repeatRows=1); table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#7B1024')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('ALIGN',(0,0),(0,-1),'CENTER'),('GRID',(0,0),(-1,-1),0.35,colors.HexColor('#D8D0D2')),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),6),('BOTTOMPADDING',(0,0),(-1,-1),6)])); story.extend([table,Spacer(1,8),Paragraph('Códigos: 1 correcta sin apoyo visual · 1V correcta con apoyo visual · 0 equivocada o sin respuesta.',styles['BodyText'])])
+        story.append(PageBreak()); story.append(Paragraph('HOJA DE RESPUESTAS · USO DOCENTE',styles['Title']))
+        ans=[['No.','Respuesta esperada','Habilidad equivalente']]+[[str(q['number']),escape(q['answer']),escape(q['category'])] for q in questions]
+        at=Table(ans,colWidths=[1.4*cm,6.2*cm,10.4*cm],repeatRows=1); at.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#217346')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('GRID',(0,0),(-1,-1),0.4,colors.HexColor('#CBD5E1')),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),7),('BOTTOMPADDING',(0,0),(-1,-1),7)])); story.append(at)
+        story.extend([Spacer(1,12),Paragraph('REGISTRO INDIVIDUAL',styles['Heading2']),Paragraph('Alumno(a): ____________________________________   Grupo: ______   Fecha: __________   Visita: ____',styles['BodyText'])])
+        reg=[['Reactivo']+[str(i) for i in range(1,11)],['Código']+['' for _ in range(10)]]; rt=Table(reg,colWidths=[2.3*cm]+[1.5*cm]*10,rowHeights=[0.8*cm,1.2*cm]); rt.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#F1F5F9')),('GRID',(0,0),(-1,-1),0.5,colors.HexColor('#64748B')),('ALIGN',(0,0),(-1,-1),'CENTER'),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')])); story.append(rt)
+        story.append(PageBreak()); story.append(Paragraph('TARJETAS DE APOYO VISUAL',styles['Title'])); story.append(Paragraph('Recorte o muestre cada tarjeta en tamaño grande únicamente cuando el procedimiento de aplicación requiera apoyo visual.',styles['BodyText'])); story.append(Spacer(1,10))
+        cards=[]
+        for q in questions:
+            box=Table([[Paragraph('REACTIVO '+str(q['number']),styles['Heading3'])],[Paragraph(escape(q['prompt']),card)]],colWidths=[18*cm],rowHeights=[1.2*cm,6.3*cm])
+            box.setStyle(TableStyle([('BOX',(0,0),(-1,-1),1.5,colors.HexColor('#7B1024')),('BACKGROUND',(0,0),(-1,0),colors.HexColor('#F8EDEF')),('ALIGN',(0,0),(-1,-1),'CENTER'),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('LEFTPADDING',(0,0),(-1,-1),18),('RIGHTPADDING',(0,0),(-1,-1),18)])); cards.append(box)
+        for i,box in enumerate(cards):
+            story.append(box)
+            if i%2==0 and i<len(cards)-1: story.append(Spacer(1,0.7*cm))
+            elif i<len(cards)-1: story.append(PageBreak())
+        doc.build(story); output.seek(0)
         return send_file(output,as_attachment=True,download_name=f'calculo_mental_{grade}grado_{date.today().isoformat()}.pdf',mimetype='application/pdf')
 
     @app.route('/sisat/export.xlsx')
