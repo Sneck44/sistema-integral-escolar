@@ -116,7 +116,7 @@ def install(app):
         s=core.db.session.get(core.Student,sid)
         if not s:return redirect('/students')
         if request.method=='POST' and request.form.get('confirm')=='ELIMINAR':
-            _student_cleanup(s.id); core.db.session.delete(s); core.db.session.commit(); flash('Alumno y registros relacionados eliminados.'); return redirect('/students')
+            s.status='BAJA'; core.db.session.commit(); flash('Alumno dado de baja; se conserva su historial académico.'); return redirect('/students')
         return core.page('Eliminar alumno',f'<h1>Eliminar alumno</h1><div class="card danger"><h2>{escape(s.full_name)}</h2><p>Se eliminarán también sus calificaciones, asistencia, incidencias, diagnóstico, tallas y evaluaciones de rúbrica. Esta acción no se puede deshacer.</p><form method="post"><label>Escribe ELIMINAR para confirmar<input name="confirm" required></label><br><br><button style="background:#a01818">Eliminar definitivamente</button></form></div>')
 
     # ---------- CALIFICACIONES ----------
