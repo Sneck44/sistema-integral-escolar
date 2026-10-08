@@ -5,12 +5,12 @@ import ui_app
 app = ui_app.app
 
 BASE_DIR = os.path.dirname(__file__)
-LOGO_FILE = os.path.join(BASE_DIR, 'static', 'logo-benito-juarez-final.PNG')
+LOGO_FILE = os.path.join(BASE_DIR, 'static', 'logo_escuela_identidad.png')
 APP_ICON_FILE = os.path.join(BASE_DIR, 'static', 'apple-touch-icon.PNG')
 
 
 def school_logo_exact():
-    return send_file(LOGO_FILE, mimetype='image/png', conditional=True, max_age=0, download_name='logo-benito-juarez-final.PNG')
+    return send_file(LOGO_FILE, mimetype='image/png', conditional=True, max_age=0, download_name='logo_escuela_identidad.png')
 
 
 def apple_touch_icon_exact():
@@ -37,7 +37,7 @@ def add_ios_app_icon(response):
             html = html.replace('</head>', tags + '</head>', 1); response.set_data(html); response.headers['Content-Length'] = str(len(response.get_data()))
     return response
 
-ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
+ui_app.STATIC_LOGO = '/school-logo?v=20261008-identidad'
 
 # Se registra primero para que Flask la aplique al final de la cadena de respuesta.
 # Así la capa visual moderna prevalece sin alterar la lógica de los módulos.
