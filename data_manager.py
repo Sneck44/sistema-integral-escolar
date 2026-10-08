@@ -117,7 +117,7 @@ def install(app):
         if not s:return redirect('/students')
         if request.method=='POST' and request.form.get('confirm')=='ELIMINAR':
             s.status='BAJA'; core.db.session.commit(); flash('Alumno dado de baja; se conserva su historial académico.'); return redirect('/students')
-        return core.page('Eliminar alumno',f'<h1>Eliminar alumno</h1><div class="card danger"><h2>{escape(s.full_name)}</h2><p>Se eliminarán también sus calificaciones, asistencia, incidencias, diagnóstico, tallas y evaluaciones de rúbrica. Esta acción no se puede deshacer.</p><form method="post"><label>Escribe ELIMINAR para confirmar<input name="confirm" required></label><br><br><button style="background:#a01818">Eliminar definitivamente</button></form></div>')
+        return core.page('Baja de alumno',f'<h1>Dar de baja a un alumno</h1><div class="card danger"><h2>{escape(s.full_name)}</h2><p>Se conservarán sus calificaciones, asistencia, diagnóstico e historial. El alumno dejará de aparecer en los listados activos. Podrás reactivarlo desde Editar alumno.</p><form method="post"><label>Escribe ELIMINAR para confirmar la baja administrativa<input name="confirm" required></label><br><br><button style="background:#7b1024">Confirmar baja</button> <a href="/students">Cancelar</a></form></div>')
 
     # ---------- CALIFICACIONES ----------
     @app.route('/grades/manage')
