@@ -56,6 +56,22 @@ button,.btn,[role="button"],input,select,textarea{min-height:42px}
 }
 @media(orientation:landscape) and (max-height:520px){body{padding-bottom:66px!important}.bottom-nav{min-height:58px!important}.bottom-nav a{min-height:46px!important}.modal,.dialog,[role="dialog"]{max-height:calc(100svh - 12px)!important}}
 @media print{.bottom-nav,.mobile-top,.workspace-mobile,nav,.no-print{display:none!important}body{padding:0!important;background:#fff!important}.wrap{max-width:none!important;padding:0!important}.card,.panel{box-shadow:none!important;break-inside:avoid}.scroll,.responsive-table-wrap{overflow:visible!important}table{width:100%!important;min-width:0!important}}
+
+/* Redesign v2: visual-only tokens and components. No route or data changes. */
+:root{--v2-wine:#7b1024;--v2-deep:#4b0b1c;--v2-blush:#f8edf0;--v2-paper:#fffaf9;--v2-gold:#caa45f}
+body{background:#faf7f7}
+.sidebar{background:linear-gradient(165deg,#7b1024,#4b0b1c)!important}
+.nav-link{border-radius:12px!important}
+.nav-link.active{background:#aa3550!important}
+.topbar{background:rgba(255,255,255,.96)!important;border-bottom:1px solid #f0e6e8!important}
+.panel,.card,.stat-card{border-radius:18px!important;border:1px solid #f0e7e9!important;box-shadow:0 8px 25px rgba(60,12,27,.06)!important}
+.hero-panel{background:linear-gradient(110deg,#fff9f8,#f4e1e5 65%,#e6e5f1)!important;border-radius:20px!important}
+.hero-copy h1{color:#4b0b1c!important;letter-spacing:-.03em}
+.quick a{border-radius:16px!important;background:#f9f0f2!important}
+.quick a:nth-child(3n+2){background:#eef7f2!important}
+.quick a:nth-child(3n){background:#f0effa!important}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #d2a0ac!important;outline-offset:2px}
+@media(max-width:720px){.mobile-top{background:linear-gradient(110deg,#7b1024,#4b0b1c)!important}.hero-panel{padding:20px!important}.quick{gap:10px!important}.quick a{min-height:95px!important}.stats{gap:10px!important}}
 </style>
 <script id="responsive-runtime-script-v2">
 (function(){
