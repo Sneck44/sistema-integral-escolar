@@ -106,9 +106,7 @@ def install(app):
             <label>Nombre(s)<input name="names" required></label>
             <label>Tutor<input name="tutor"></label>
             <label>Teléfono<input name="phone"></label>
-        </div>
-        <div class="card">
-          <h2>Medidas y tallas (opcional)</h2>
+            <div style="grid-column:1/-1"><h2>Medidas y tallas (opcional)</h2></div>
             <label>Peso (kg)<input name="weight_kg" type="number" step="0.1" min="0" placeholder="Ej. 45.5"></label>
             <label>Estatura (cm)<input name="height_cm" type="number" step="0.1" min="0" placeholder="Ej. 152"></label>
             <label>Talla playera / blusa<input name="top_size" placeholder="Ej. 14, CH, M"></label>
