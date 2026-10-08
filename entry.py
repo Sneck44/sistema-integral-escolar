@@ -39,6 +39,11 @@ def add_ios_app_icon(response):
 
 ui_app.STATIC_LOGO = '/school-logo?v=20260902-finalpng'
 
+# Se registra primero para que Flask la aplique al final de la cadena de respuesta.
+# Así la capa visual moderna prevalece sin alterar la lógica de los módulos.
+from modern_ui import install as install_modern_ui
+install_modern_ui(app)
+
 from admin_ui_finalizer import install as install_admin_ui_finalizer
 install_admin_ui_finalizer(app)
 
