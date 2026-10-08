@@ -92,13 +92,13 @@ def install(app):
               <td>{escape(clothing)}</td>
               <td>{escape(shoe)}</td>
               <td>{escape(student.tutor or '—')}<br><small>{escape(student.phone or '')}</small></td>
-              <td><a href="/students/{student.id}/edit" style="font-weight:700">Editar</a></td>
+              <td><a href="/students/{student.id}/edit" style="font-weight:700">Editar</a> · <a href="/students/{student.id}/delete" style="color:#7b1024">Dar de baja</a></td>
             </tr>'''
 
         body = f'''
         <h1>Alumnos</h1>
         <div class="card">
-          <h2>Agregar alumno</h2>
+          <h2>Datos generales del alumno</h2><p class="muted">Completa los datos generales y las tallas; después guarda el expediente.</p>
           <form method="post" class="grid">
             <label>No. de lista<input name="list_no" type="number" min="1"></label>
             <label>Apellido paterno<input name="paternal" required></label>
@@ -124,7 +124,7 @@ def install(app):
             <label>Talla suéter / chamarra<input name="sweater_size" placeholder="Ej. CH, M, G"></label>
             <label>Número de calzado<input name="shoe_size" placeholder="Ej. 24.5"></label>
             <label style="grid-column:1/-1">Observaciones de uniforme<textarea name="uniform_notes" rows="2" placeholder="Ajustes, talla especial, observaciones..."></textarea></label>
-            <div><button type="submit">Agregar alumno</button></div>
+            <div><button type="submit">Guardar expediente</button></div>
           </form>
           <script>
           (function(){{
