@@ -99,24 +99,16 @@ def install(app):
         <h1>Alumnos</h1>
         <div class="card">
           <h2>Datos generales del alumno</h2><p class="muted">Completa los datos generales y las tallas; después guarda el expediente.</p>
-          <form method="post" class="grid">
+          <form method="post" class="grid" id="student-complete-form">
             <label>No. de lista<input name="list_no" type="number" min="1"></label>
             <label>Apellido paterno<input name="paternal" required></label>
             <label>Apellido materno<input name="maternal"></label>
             <label>Nombre(s)<input name="names" required></label>
             <label>Tutor<input name="tutor"></label>
             <label>Teléfono<input name="phone"></label>
-          </form>
         </div>
         <div class="card">
-          <h2>Peso, estatura y tallas</h2>
-          <form method="post" class="grid" id="student-complete-form">
-            <input type="hidden" name="list_no" id="f-list_no">
-            <input type="hidden" name="paternal" id="f-paternal">
-            <input type="hidden" name="maternal" id="f-maternal">
-            <input type="hidden" name="names" id="f-names">
-            <input type="hidden" name="tutor" id="f-tutor">
-            <input type="hidden" name="phone" id="f-phone">
+          <h2>Medidas y tallas (opcional)</h2>
             <label>Peso (kg)<input name="weight_kg" type="number" step="0.1" min="0" placeholder="Ej. 45.5"></label>
             <label>Estatura (cm)<input name="height_cm" type="number" step="0.1" min="0" placeholder="Ej. 152"></label>
             <label>Talla playera / blusa<input name="top_size" placeholder="Ej. 14, CH, M"></label>
@@ -126,21 +118,7 @@ def install(app):
             <label style="grid-column:1/-1">Observaciones de uniforme<textarea name="uniform_notes" rows="2" placeholder="Ajustes, talla especial, observaciones..."></textarea></label>
             <div><button type="submit">Guardar expediente</button></div>
           </form>
-          <script>
-          (function(){{
-            const firstForm = document.querySelector('.card form.grid:not(#student-complete-form)');
-            const fullForm = document.getElementById('student-complete-form');
-            if (!firstForm || !fullForm) return;
-            firstForm.addEventListener('submit', function(e){{e.preventDefault();}});
-            fullForm.addEventListener('submit', function(){{
-              ['list_no','paternal','maternal','names','tutor','phone'].forEach(function(n){{
-                const src=firstForm.querySelector('[name="'+n+'"]');
-                const dst=document.getElementById('f-'+n);
-                if(src && dst) dst.value=src.value;
-              }});
-            }});
-          }})();
-          </script>
+
         </div>
         <div class="card scroll">
           <h2>Alumnos registrados</h2>
