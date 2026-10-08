@@ -7,7 +7,7 @@ import ui_app_base as ui
 app = ui.app
 
 # Un único origen para el logo. La ruta /school-logo la resuelve entry.py.
-STATIC_LOGO = '/school-logo?v=20260902-finalpng'
+STATIC_LOGO = '/school-logo?v=20261008-identidad'
 
 MONTHS = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
           'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
