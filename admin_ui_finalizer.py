@@ -59,6 +59,17 @@ def _reorder_sidebar(html):
         by_href.pop('/users', None)
         by_href.pop('/config', None)
 
+    # Evitar duplicados de una misma función aunque diferentes módulos
+    # inserten enlaces equivalentes en la navegación.
+    aliases = {
+        '/data-management': '/suite',
+        '/grades/manage': '/activities',
+        '/attendance/manage': '/attendance',
+    }
+    for redundant, canonical in aliases.items():
+        if redundant in by_href and canonical in by_href:
+            by_href.pop(redundant, None)
+
     known = {'/','/students','/subjects','/activities','/attendance','/agenda','/suite','/incidents','/account/profile','/users','/config','/logout'}
     extras = [(href, anchor) for href, anchor in by_href.items() if href not in known]
 
