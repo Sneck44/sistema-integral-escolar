@@ -92,7 +92,7 @@ def install(app):
               <td>{escape(clothing)}</td>
               <td>{escape(shoe)}</td>
               <td>{escape(student.tutor or '—')}<br><small>{escape(student.phone or '')}</small></td>
-              <td><a href="/students/{student.id}/edit" style="font-weight:700">Editar</a> · <a href="/students/{student.id}/delete" style="color:#7b1024">Dar de baja</a></td>
+              <td><a href="/trimester-charts?student={student.id}#student-{student.id}" style="font-weight:800;color:#7b1024">Ver gráfica</a> · <a href="/students/{student.id}/edit" style="font-weight:700">Editar</a> · <a href="/students/{student.id}/delete" style="color:#7b1024">Dar de baja</a></td>
             </tr>'''
 
         body = f'''
