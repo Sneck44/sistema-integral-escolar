@@ -1,16 +1,88 @@
 """Reportes académicos por grupo: trimestre y diagnóstico por asignatura."""
 import io
+import unicodedata
 from collections import defaultdict
 from html import escape
 
 import xlsxwriter
-from flask import request, session, redirect, send_file
+from flask import has_request_context, request, session, redirect, send_file
 
 import app as core
 import diagnostic
 
 
 TRIMESTERS = list(core.TRIMS)
+
+
+# Orden curricular solicitado para la captura, consulta y exportación trimestral.
+# Las variantes de Ciencias (Biología, Física, Química, etc.) comparten la
+# posición de Ciencias y conservan un orden alfabético estable entre ellas.
+SUBJECT_ORDER = (
+    (0, 0, ('espanol',)),
+    (0, 1, ('ingles',)),
+    (0, 2, ('artes', 'arte')),
+    (1, 0, ('matematicas', 'matematica')),
+    (1, 1, ('ciencias', 'ciencia', 'biologia', 'fisica', 'quimica')),
+    (2, 0, ('historia',)),
+    (2, 1, ('formacion civica y etica', 'formacion civica', 'civica y etica', 'fcye')),
+    (2, 2, ('geografia',)),
+    (3, 0, ('educacion fisica',)),
+    (3, 1, ('tecnologias', 'tecnologia')),
+)
+
+
+def _normalize_subject_name(value):
+    text = unicodedata.normalize('NFKD', str(value or ''))
+    return ''.join(char for char in text if not unicodedata.combining(char)).lower().strip()
+
+
+def _active_grade_number():
+    grade = None
+    if has_request_context():
+        try:
+            import group_workspaces
+            grade, _ = group_workspaces.active_group_tuple()
+        except Exception:
+            pass
+    if not grade:
+        grade = core.cfg().grade
+    digits = ''.join(char for char in str(grade) if char.isdigit())
+    return digits if digits in {'1', '2', '3'} else '1'
+
+
+def _subject_order_key(subject):
+    name = _normalize_subject_name(getattr(subject, 'name', subject))
+    # Evita clasificar "Educación Física" como una variante de Ciencias/Física.
+    if 'educacion fisica' in name:
+        return 3, 0, name
+    for field_rank, subject_rank, patterns in SUBJECT_ORDER:
+        if any(pattern in name for pattern in patterns):
+            return field_rank, subject_rank, name
+
+    field = _normalize_subject_name(getattr(subject, 'field', ''))
+    if 'lenguaje' in field:
+        field_rank = 0
+    elif 'saber' in field or 'pensamiento cientifico' in field:
+        field_rank = 1
+    elif 'etica' in field or 'naturaleza' in field or 'sociedades' in field:
+        field_rank = 2
+    elif 'humano' in field or 'comunitario' in field or 'tecnologia' in field:
+        field_rank = 3
+    else:
+        field_rank = 9
+    return field_rank, 90, name
+
+
+def _ordered_subjects(subjects, grade_number=None):
+    grade_number = str(grade_number or _active_grade_number())
+    visible = [
+        subject for subject in subjects
+        if not (
+            grade_number in {'2', '3'}
+            and 'geografia' in _normalize_subject_name(getattr(subject, 'name', subject))
+        )
+    ]
+    return sorted(visible, key=_subject_order_key)
 
 
 def _students():
@@ -32,7 +104,7 @@ def _subject_averages(trimester):
     from activity_manager import activity_subject_ids
 
     students = _students()
-    subjects = core.Subject.query.order_by(core.Subject.name).all()
+    subjects = _ordered_subjects(core.Subject.query.all())
     activities = core.Activity.query.filter_by(trimester=trimester).all()
     # La actividad puede valer distinto puntaje: normalizar cada resultado a escala 0-10.
     activity_map = defaultdict(list)
@@ -326,6 +398,7 @@ def install(app):
         summary = ''.join(f'<td>{"—" if not (v := [values[(s.id, sub.id)] for s in students if values.get((s.id, sub.id)) is not None]) else f"{sum(v)/len(v):.2f}"}</td>' for sub in subjects)
         body = f'''<h1>Calificaciones trimestrales · {escape(_context())}</h1>
         <div class="card"><form method="get" style="display:flex;align-items:end;gap:12px;flex-wrap:wrap"><label>Trimestre<select name="trimester">{options}</select></label><button style="width:auto">Consultar</button><a href="/quarterly-grades.xlsx?trimester={escape(trimester)}" style="padding:11px 15px;background:#217346;color:white;border-radius:9px;text-decoration:none;font-weight:bold">Exportar Excel</a><a href="/quarterly-grades/direction.xlsx?trimester={escape(trimester)}" style="padding:11px 15px;background:#7b1024;color:white;border-radius:9px;text-decoration:none;font-weight:bold">Formato para Dirección · por asignatura</a></form>
+        <p class="muted"><b>Orden curricular:</b> Lenguajes (Español, Inglés, Artes) → Saberes y Pensamiento Científico (Matemáticas, Ciencias) → Ética, Naturaleza y Sociedades (Historia, Formación Cívica y Ética, Geografía) → Tecnología (Educación Física, Tecnologías). Geografía se muestra solamente en primer grado.</p>
         <p class="muted">Cada actividad o examen registrado se normaliza a 0–10; el promedio por asignatura es la media de sus actividades calificadas. El promedio general es la media de las asignaturas con evidencia. No se imputan ceros por registros faltantes.</p></div>
         <div class="card scroll"><table><tr><th>N/P</th><th>Alumno</th>{headers}<th>Promedio</th></tr>{rows}<tr><th></th><th>Promedio del grupo</th>{summary}<th></th></tr></table></div>'''
         return core.page('Calificaciones trimestrales', body)
