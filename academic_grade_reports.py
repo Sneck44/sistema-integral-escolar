@@ -50,11 +50,19 @@ def _active_grade_number():
 
 def _subject_order_key(subject):
     name = _normalize_subject_name(getattr(subject, 'name', subject))
+    compact_name = ' '.join(
+        ''.join(char if char.isalnum() else ' ' for char in name).split()
+    )
     # Estas dos asignaturas deben cerrar siempre el formato, incluso si existen
     # materias adicionales que no forman parte del listado curricular principal.
-    if 'educacion fisica' in name:
+    if (
+        'educacion fisica' in compact_name
+        or compact_name.startswith('e fisica')
+        or compact_name.startswith('ed fisica')
+        or compact_name.startswith('educ fisica')
+    ):
         return 98, 0, name
-    if 'tecnologia' in name:
+    if 'tecnologia' in compact_name:
         return 99, 0, name
     for field_rank, subject_rank, patterns in SUBJECT_ORDER:
         if any(pattern in name for pattern in patterns):
