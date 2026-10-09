@@ -26,8 +26,6 @@ SUBJECT_ORDER = (
     (2, 0, ('historia',)),
     (2, 1, ('formacion civica y etica', 'formacion civica', 'civica y etica', 'fcye')),
     (2, 2, ('geografia',)),
-    (3, 0, ('educacion fisica',)),
-    (3, 1, ('tecnologias', 'tecnologia')),
 )
 
 
@@ -52,9 +50,12 @@ def _active_grade_number():
 
 def _subject_order_key(subject):
     name = _normalize_subject_name(getattr(subject, 'name', subject))
-    # Evita clasificar "Educación Física" como una variante de Ciencias/Física.
+    # Estas dos asignaturas deben cerrar siempre el formato, incluso si existen
+    # materias adicionales que no forman parte del listado curricular principal.
     if 'educacion fisica' in name:
-        return 3, 0, name
+        return 98, 0, name
+    if 'tecnologia' in name:
+        return 99, 0, name
     for field_rank, subject_rank, patterns in SUBJECT_ORDER:
         if any(pattern in name for pattern in patterns):
             return field_rank, subject_rank, name
