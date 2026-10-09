@@ -19,7 +19,7 @@ GROUP_MAP = {code: (grade, group_name) for code, grade, group_name in GROUPS}
 # y permisos quedan fuera porque son globales al sistema.
 SCOPED_TABLES = {
     'student', 'student_details', 'student_diagnostic', 'sisat_assessment',
-    'subject', 'activity', 'grade', 'attendance', 'incident',
+    'subject', 'activity', 'activity_subject', 'grade', 'attendance', 'incident',
     'rubric', 'rubric_assessment',
 }
 

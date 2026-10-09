@@ -29,6 +29,8 @@ def _context():
 
 
 def _subject_averages(trimester):
+    from activity_manager import activity_subject_ids
+
     students = _students()
     subjects = core.Subject.query.order_by(core.Subject.name).all()
     activities = core.Activity.query.filter_by(trimester=trimester).all()
@@ -36,7 +38,8 @@ def _subject_averages(trimester):
     activity_map = defaultdict(list)
     for activity in activities:
         if activity.max_score and activity.max_score > 0:
-            activity_map[activity.subject_id].append(activity)
+            for subject_id in activity_subject_ids(activity):
+                activity_map[subject_id].append(activity)
     ids = [a.id for a in activities if a.max_score and a.max_score > 0]
     grades = core.Grade.query.filter(core.Grade.activity_id.in_(ids)).all() if ids else []
     grade_map = {(g.student_id, g.activity_id): g for g in grades}

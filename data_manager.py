@@ -12,7 +12,19 @@ def _auth():
 
 
 def _activity_cleanup(activity_id):
-    core.Grade.query.filter_by(activity_id=activity_id).delete(synchronize_session=False)
+    for grade in core.Grade.query.filter_by(activity_id=activity_id).all():
+        core.db.session.delete(grade)
+    try:
+        from activity_manager import ActivitySubject
+        for link in ActivitySubject.query.filter_by(activity_id=activity_id).all():
+            core.db.session.delete(link)
+    except Exception:
+        pass
+    try:
+        from integral_suite import StudentActivityStatus
+        StudentActivityStatus.query.filter_by(activity_id=activity_id).delete(synchronize_session=False)
+    except Exception:
+        pass
     try:
         from rubric_ai import Rubric, RubricAssessment
         rubric = Rubric.query.filter_by(activity_id=activity_id).first()
@@ -78,7 +90,10 @@ def install(app):
         opts=''.join(f'<option>{escape(x)}</option>' for x in core.FIELDS)
         rows=''
         for s in core.Subject.query.order_by(core.Subject.name).all():
-            count=core.Activity.query.filter_by(subject_id=s.id).count()
+            from activity_manager import ActivitySubject
+            activity_ids = {a.id for a in core.Activity.query.filter_by(subject_id=s.id).all()}
+            activity_ids.update(row.activity_id for row in ActivitySubject.query.filter_by(subject_id=s.id).all())
+            count=len(activity_ids)
             rows+=f'<tr><td><b>{escape(s.name)}</b></td><td>{escape(s.field)}</td><td>{count}</td><td><a href="/subjects/{s.id}/edit">Editar</a> · <a href="/subjects/{s.id}/delete" style="color:#a01818">Eliminar</a></td></tr>'
         return core.page('Asignaturas',f'''<h1>Asignaturas</h1><div class="card"><form method="post" class="grid"><label>Asignatura<input name="name" required></label><label>Campo formativo<select name="field">{opts}</select></label><div><button>Agregar</button></div></form></div><div class="card scroll"><table><tr><th>Asignatura</th><th>Campo</th><th>Actividades</th><th>Acciones</th></tr>{rows}</table></div>''')
     app.view_functions['subjects']=subjects_crud
@@ -100,12 +115,21 @@ def install(app):
         if r:return r
         s=core.db.session.get(core.Subject,sid)
         if not s:return redirect('/subjects')
-        activities=core.Activity.query.filter_by(subject_id=s.id).all()
+        from activity_manager import ActivitySubject, activity_subject_ids, _set_activity_subjects
+        activity_ids = {a.id for a in core.Activity.query.filter_by(subject_id=s.id).all()}
+        activity_ids.update(row.activity_id for row in ActivitySubject.query.filter_by(subject_id=s.id).all())
+        activities=[a for aid in activity_ids if (a := core.db.session.get(core.Activity, aid))]
         if request.method=='POST' and request.form.get('confirm')=='ELIMINAR':
             for a in activities:
-                _activity_cleanup(a.id); core.db.session.delete(a)
+                remaining = [subject_id for subject_id in activity_subject_ids(a) if subject_id != s.id]
+                if remaining:
+                    _set_activity_subjects(a, remaining)
+                else:
+                    _activity_cleanup(a.id); core.db.session.delete(a)
             core.db.session.delete(s); core.db.session.commit(); flash('Asignatura y registros relacionados eliminados.'); return redirect('/subjects')
-        warning=f'Esta asignatura tiene {len(activities)} actividad(es). También se eliminarán sus calificaciones y rúbricas relacionadas.' if activities else 'La asignatura no tiene actividades relacionadas.'
+        only_subject = sum(1 for activity in activities if len(activity_subject_ids(activity)) <= 1)
+        shared = len(activities) - only_subject
+        warning = (f'Esta asignatura participa en {len(activities)} actividad(es): se retirará de {shared} actividad(es) interdisciplinaria(s) y se eliminarán {only_subject} actividad(es) que no tienen otra asignatura vinculada.' if activities else 'La asignatura no tiene actividades relacionadas.')
         return core.page('Eliminar asignatura',f'<h1>Eliminar asignatura</h1><div class="card danger"><h2>{escape(s.name)}</h2><p>{escape(warning)}</p><form method="post"><label>Escribe ELIMINAR para confirmar<input name="confirm" required></label><br><br><button style="background:#a01818">Eliminar definitivamente</button></form></div>')
 
     # ---------- ALUMNOS ----------

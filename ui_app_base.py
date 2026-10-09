@@ -115,7 +115,8 @@ def dashboard():
     days, values = attendance_series()
 
     upcoming = core.Activity.query.filter(core.Activity.activity_date >= date.today()).order_by(core.Activity.activity_date).limit(3).all()
-    events = ''.join(f'<div class="event"><span class="event-dot"></span><div><b>{a.name}</b><small>{a.activity_date.strftime("%d/%m/%Y")} · {a.subject.name if a.subject else "Actividad"}</small></div></div>' for a in upcoming)
+    from activity_manager import activity_subject_label
+    events = ''.join(f'<div class="event"><span class="event-dot"></span><div><b>{a.name}</b><small>{a.activity_date.strftime("%d/%m/%Y")} · {activity_subject_label(a)}</small></div></div>' for a in upcoming)
     if not events:
         events = '<div class="muted" style="padding:8px 0">No hay eventos próximos registrados.</div>'
 

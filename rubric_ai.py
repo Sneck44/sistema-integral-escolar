@@ -210,6 +210,8 @@ def _render_rubric_table(data, editable=False, prefix=''):
 
 
 def install(app):
+    from activity_manager import activity_subject_label, activity_subjects
+
     @app.before_request
     def rubric_bootstrap():
         core.db.create_all()
@@ -222,7 +224,7 @@ def install(app):
         for rubric in Rubric.query.order_by(Rubric.updated_at.desc()).all():
             count = RubricAssessment.query.filter_by(rubric_id=rubric.id).count()
             a = rubric.activity
-            rows += f'''<tr><td><b>{escape(rubric.title)}</b><br><small>{escape(a.name)} · {escape(a.subject.name if a.subject else '')}</small></td><td>{count}</td><td><a href="/rubrics/{rubric.id}">Ver</a> · <a href="/rubrics/{rubric.id}/edit">Editar</a> · <a href="/rubrics/{rubric.id}/grade">Calificar</a></td></tr>'''
+            rows += f'''<tr><td><b>{escape(rubric.title)}</b><br><small>{escape(a.name)} · {escape(activity_subject_label(a))}</small></td><td>{count}</td><td><a href="/rubrics/{rubric.id}">Ver</a> · <a href="/rubrics/{rubric.id}/edit">Editar</a> · <a href="/rubrics/{rubric.id}/grade">Calificar</a></td></tr>'''
         if not rows:
             rows = '<tr><td colspan="3">Aún no has creado rúbricas.</td></tr>'
         ai_status = 'IA conectada' if os.getenv('OPENAI_API_KEY') else 'Falta configurar OPENAI_API_KEY en Vercel'
@@ -245,7 +247,10 @@ def install(app):
             product = request.form.get('product', '').strip()
             context = request.form.get('context', '').strip()
             system = '''Eres especialista en evaluación formativa, diseño curricular y construcción de rúbricas analíticas para secundaria. Diseña una rúbrica técnicamente sólida: 4 a 6 criterios no redundantes, alineados al producto y propósito; ponderaciones que sumen 100%; cuatro niveles (4 Sobresaliente, 3 Logrado, 2 En proceso, 1 Inicial). Cada descriptor debe ser observable, específico, verificable y distinguir con claridad la calidad del desempeño. Evita palabras vagas como excelente, bien, regular o mal si no están acompañadas por evidencias observables. No evalúes conducta salvo que sea parte explícita del aprendizaje. Redacta en español mexicano y con lenguaje adecuado para Telesecundaria.'''
-            user = f'''Actividad: {activity.name}\nAsignatura/Disciplina: {activity.subject.name if activity.subject else ''}\nCampo formativo: {activity.subject.field if activity.subject else ''}\nTrimestre: {activity.trimester}\nPuntaje máximo: {activity.max_score}\nPropósito de evaluación: {purpose}\nProducto o evidencia: {product}\nContexto adicional: {context}\nGenera una rúbrica aplicable directamente a esta actividad.'''
+            linked_subjects = activity_subjects(activity)
+            subject_names = ', '.join(subject.name for subject in linked_subjects)
+            field_names = ', '.join(dict.fromkeys(subject.field for subject in linked_subjects if subject.field))
+            user = f'''Actividad: {activity.name}\nAsignatura(s)/Disciplina(s): {subject_names}\nCampo(s) formativo(s): {field_names}\nTrimestre: {activity.trimester}\nPuntaje máximo: {activity.max_score}\nPropósito de evaluación: {purpose}\nProducto o evidencia: {product}\nContexto adicional: {context}\nGenera una rúbrica interdisciplinaria aplicable directamente a esta actividad y a todas las asignaturas indicadas.'''
             try:
                 data, model = _ai_json(system, user, _rubric_schema(), 'rubrica_analitica')
                 data = _normalize_weights(data)
@@ -255,7 +260,7 @@ def install(app):
                 return redirect(f'/rubrics/{rubric.id}/edit')
             except Exception as e:
                 flash(str(e))
-        opts = ''.join(f'<option value="{a.id}">{escape(a.name)} · {escape(a.subject.name if a.subject else "")} · {escape(a.trimester)}</option>' for a in activities)
+        opts = ''.join(f'<option value="{a.id}">{escape(a.name)} · {escape(activity_subject_label(a))} · {escape(a.trimester)}</option>' for a in activities)
         body = f'''<h1>Generar rúbrica con IA</h1><div class="card"><form method="post"><label>Actividad<select name="activity_id" required><option value="">Selecciona…</option>{opts}</select></label><br><br><label>Propósito de evaluación<textarea name="purpose" rows="3" required placeholder="¿Qué aprendizaje quieres valorar?"></textarea></label><br><br><label>Producto o evidencia<textarea name="product" rows="3" required placeholder="Ej. exposición, infografía, reporte, resolución de problemas, proyecto…"></textarea></label><br><br><label>Contexto adicional (opcional)<textarea name="context" rows="3" placeholder="PDA, contenido, condiciones de trabajo, aspectos indispensables…"></textarea></label><br><br><button>✨ Generar rúbrica profesional con IA</button></form></div>'''
         return core.page('Nueva rúbrica', body)
 

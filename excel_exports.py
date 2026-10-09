@@ -152,7 +152,8 @@ def _diagnostic_rows():
 
 
 def _activities_rows():
-    return [[a.activity_date.strftime('%d/%m/%Y') if a.activity_date else '', a.name, a.subject.name if a.subject else '', a.trimester, a.max_score] for a in core.Activity.query.order_by(core.Activity.activity_date).all()]
+    from activity_manager import activity_subject_label
+    return [[a.activity_date.strftime('%d/%m/%Y') if a.activity_date else '', a.name, activity_subject_label(a), a.trimester, a.max_score] for a in core.Activity.query.order_by(core.Activity.activity_date).all()]
 
 
 def _grade_value_10(g, activity):
@@ -379,7 +380,7 @@ def _make_workbook(section='all'):
     if section in ('all', 'diagnostic'):
         _add_sheet(wb, 'Diagnóstico', 'DIAGNÓSTICO DEL GRUPO', ['No.', 'Alumno', 'Calificación', 'Ritmo', 'Estilo de aprendizaje', 'Canal de percepción', 'Nivel', 'Fortalezas', 'Necesidades de apoyo', 'Observaciones'], _diagnostic_rows(), [6, 28, 11, 14, 18, 20, 16, 30, 30, 30])
     if section in ('all', 'activities'):
-        _add_sheet(wb, 'Actividades', 'REGISTRO DE ACTIVIDADES', ['Fecha', 'Actividad', 'Asignatura', 'Trimestre', 'Puntaje máximo'], _activities_rows(), [12, 35, 24, 22, 14], False)
+        _add_sheet(wb, 'Actividades', 'REGISTRO DE ACTIVIDADES', ['Fecha', 'Actividad', 'Asignatura(s)', 'Trimestre', 'Puntaje máximo'], _activities_rows(), [12, 35, 34, 22, 14], False)
     if section in ('all', 'grades'):
         _add_grades_sheet(wb)
     if section in ('all', 'attendance'):

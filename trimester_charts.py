@@ -32,13 +32,16 @@ def _student_progress_data(students):
             core.Grade.score.isnot(None),
         ).all()
 
+    from activity_manager import activity_subject_ids
+
     subject_scores = defaultdict(list)
     for grade in grades:
         activity = activity_map.get(grade.activity_id)
         if not activity:
             continue
         normalized = max(0, min(10, (grade.score / activity.max_score) * 10))
-        subject_scores[(grade.student_id, activity.trimester, activity.subject_id)].append(normalized)
+        for subject_id in activity_subject_ids(activity):
+            subject_scores[(grade.student_id, activity.trimester, subject_id)].append(normalized)
 
     progress = {}
     for student in students:
@@ -102,20 +105,26 @@ def _student_progress_card(student, progress):
 
 
 def _trimester_data(trimester):
+    from activity_manager import activity_subject_ids
+
     activities = core.Activity.query.filter_by(trimester=trimester).order_by(core.Activity.activity_date).all()
+    subject_names = {subject.id: subject.name for subject in core.Subject.query.all()}
     subjects = {}
     subject_scores = defaultdict(list)
     student_scores = defaultdict(list)
 
     for a in activities:
-        if a.subject:
-            subjects[a.subject_id] = a.subject.name
+        linked_subject_ids = activity_subject_ids(a)
+        for subject_id in linked_subject_ids:
+            if subject_id in subject_names:
+                subjects[subject_id] = subject_names[subject_id]
         grades = core.Grade.query.filter_by(activity_id=a.id).all()
         for g in grades:
             if g.score is None or not a.max_score:
                 continue
             normalized = max(0, min(10, (g.score / a.max_score) * 10))
-            subject_scores[a.subject_id].append(normalized)
+            for subject_id in linked_subject_ids:
+                subject_scores[subject_id].append(normalized)
             student_scores[g.student_id].append(normalized)
 
     subject_avgs = []
