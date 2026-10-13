@@ -101,6 +101,8 @@ from attendance_list_export import install as install_attendance_list_export
 install_attendance_list_export(app)
 from attendance_ui_fix import install as install_attendance_ui_fix
 install_attendance_ui_fix(app)
+from attendance_matrix import install as install_attendance_matrix
+install_attendance_matrix(app)
 from profile_avatar import install as install_profile_avatar
 install_profile_avatar(app)
 from avatar_global_fix import install as install_avatar_global_fix
