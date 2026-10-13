@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import uuid
 import urllib.request
 import urllib.error
@@ -27,6 +28,22 @@ class UserAvatar(core.db.Model):
 
 def _avatar(uid):
     return UserAvatar.query.filter_by(user_id=uid).first()
+
+
+def _inject_avatar_images(html, record):
+    if not record or not (record.avatar_data or record.original_data):
+        return html
+    stamp=int(record.updated_at.timestamp()) if record.updated_at else 1
+    img=f'<img class="avatar-user-img" src="/account/avatar/image?v={stamp}" alt="Foto de perfil">'
+    patterns=(
+        r'(<span\b[^>]*class="account-avatar"[^>]*>).*?(</span>)',
+        r'(<a\b[^>]*class="mobile-profile"[^>]*>).*?(</a>)',
+        r'(<a\b[^>]*href="/account/profile"[^>]*>\s*<span\b[^>]*class="nav-icon"[^>]*>).*?(</span>)',
+        r'(<div\b[^>]*class="avatar"[^>]*>).*?(</div>)',
+    )
+    for pattern in patterns:
+        html=re.sub(pattern,lambda match:match.group(1)+img+match.group(2),html,count=1,flags=re.S)
+    return html
 
 def _decode_data_url(value):
     value = (value or '').strip()
@@ -148,6 +165,5 @@ def install(app):
             if '</main>' in html: html=html.replace('</main>',panel+'</main>',1)
             elif '</body>' in html: html=html.replace('</body>',panel+'</body>',1)
         record=_avatar(uid)
-        if record and (record.avatar_data or record.original_data):
-            stamp=int(record.updated_at.timestamp()) if record.updated_at else 1; img=f'<img class="avatar-user-img" src="/account/avatar/image?v={stamp}" alt="Avatar">'; html=html.replace('<div class="avatar">A</div>',f'<div class="avatar">{img}</div>',1)
+        html=_inject_avatar_images(html,record)
         response.set_data(html); response.headers['Content-Length']=str(len(response.get_data())); return response

@@ -49,6 +49,23 @@ def _reorder_sidebar(html):
     by_href.setdefault('/account/profile', '<a class="nav-link" href="/account/profile"><span class="nav-icon">◎</span><span>Mi perfil</span></a>')
     by_href.setdefault('/logout', '<a class="nav-link logout" href="/logout"><span class="nav-icon">↪</span><span>Cerrar sesión</span></a>')
 
+    # La foto guardada se inyecta primero en el acceso superior. Reutilízala
+    # también en "Mi perfil" cuando este finalizador reconstruya el menú.
+    avatar_match = re.search(
+        r'<span\b[^>]*class="account-avatar"[^>]*>\s*(<img\b[^>]*class="avatar-user-img"[^>]*>)\s*</span>',
+        html,
+        flags=re.S,
+    )
+    if avatar_match and '/account/profile' in by_href:
+        avatar_img = avatar_match.group(1)
+        by_href['/account/profile'] = re.sub(
+            r'(<span\b[^>]*class="nav-icon"[^>]*>).*?(</span>)',
+            lambda match: match.group(1) + avatar_img + match.group(2),
+            by_href['/account/profile'],
+            count=1,
+            flags=re.S,
+        )
+
     if request.path.startswith('/agenda'):
         by_href['/agenda'] = by_href['/agenda'].replace('class="nav-link"','class="nav-link active"',1)
 
