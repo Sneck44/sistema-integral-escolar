@@ -1,7 +1,11 @@
+import io
+import unicodedata
 from datetime import date
 from html import escape
+from urllib.parse import quote
 
-from flask import request, session, redirect, flash, Response
+import xlsxwriter
+from flask import request, session, redirect, flash, send_file
 from sqlalchemy import select
 
 import app as core
@@ -88,6 +92,126 @@ def _all_students():
 def _student_map(): return {s.id:(s,g) for s,g in _all_students()}
 
 
+def _name_key(value):
+    text=unicodedata.normalize('NFKD',str(value or ''))
+    return ' '.join(''.join(ch for ch in text if not unicodedata.combining(ch)).casefold().split())
+
+
+def _group_parts(group_code):
+    grade,group_name=gw.GROUP_MAP.get(group_code,('',group_code or ''))
+    return grade,group_name
+
+
+def _club_members_data(club_id):
+    smap=_student_map()
+    rows=[]
+    for member in ClubMember.query.filter_by(club_id=club_id,active=True).all():
+        item=smap.get(member.student_id)
+        if not item: continue
+        student,_=item
+        rows.append((member,student))
+    return sorted(rows,key=lambda item:(
+        item[0].group_code or '',
+        _name_key(getattr(item[1],'paternal','')),
+        _name_key(getattr(item[1],'maternal','')),
+        _name_key(getattr(item[1],'names','')),
+    ))
+
+
+def _evaluation_scores(evaluation):
+    if evaluation is None: return None,None
+    ordinary=sum(int(getattr(evaluation,field,0) or 0) for field in (
+        'attendance_pts','materials_pts','delivery_pts','quality_pts','participation_pts'
+    ))
+    extra=int(getattr(evaluation,'extra_pts',0) or 0)
+    return ordinary,min(10,(ordinary+extra)/10)
+
+
+def _safe_filename(value):
+    cleaned=''.join(ch if ch.isalnum() else '_' for ch in str(value or 'Club')).strip('_')
+    return cleaned[:60] or 'Club'
+
+
+def _club_grades_workbook(club,period):
+    members=_club_members_data(club.id)
+    student_ids=[student.id for _,student in members]
+    query=ClubEvaluation.query.filter_by(club_id=club.id)
+    evaluations=query.filter(ClubEvaluation.student_id.in_(student_ids)).all() if student_ids else []
+    evaluation_map={(row.student_id,row.period):row for row in evaluations}
+
+    out=io.BytesIO()
+    wb=xlsxwriter.Workbook(out,{'in_memory':True})
+    title=wb.add_format({'bold':True,'font_size':15,'font_color':'#74142B','align':'center'})
+    subtitle=wb.add_format({'bold':True,'font_size':10,'align':'center','font_color':'#17233B'})
+    head=wb.add_format({'bold':True,'bg_color':'#74142B','font_color':'#FFFFFF','border':1,'align':'center','valign':'vcenter','text_wrap':True})
+    text=wb.add_format({'border':1,'font_size':9,'valign':'vcenter'})
+    center=wb.add_format({'border':1,'font_size':9,'align':'center','valign':'vcenter'})
+    score=wb.add_format({'border':1,'font_size':9,'align':'center','num_format':'0.0'})
+    total=wb.add_format({'bold':True,'border':1,'bg_color':'#F7E9ED','align':'center','num_format':'0.0'})
+    note=wb.add_format({'italic':True,'font_color':'#6C7483','font_size':9,'text_wrap':True})
+
+    ws=wb.add_worksheet('CALIFICACIONES')
+    cfg=core.cfg()
+    ws.merge_range('A1:M1',(cfg.school or 'Sistema Escolar').upper(),title)
+    ws.merge_range('A2:M2',f'{club.kind}: {club.name}',subtitle)
+    ws.merge_range('A3:M3',f'{period} · CICLO ESCOLAR: {cfg.cycle}',subtitle)
+    headers=['N/P','ESTUDIANTE','GRADO','GRUPO','ASISTENCIA','MATERIALES / UNIFORME','ENTREGA','CALIDAD / DESEMPEÑO','PARTICIPACIÓN','EXTRA','PUNTAJE','CALIFICACIÓN','OBSERVACIONES']
+    for col,label in enumerate(headers): ws.write(4,col,label,head)
+    ws.set_row(4,42)
+    for index,(member,student) in enumerate(members,1):
+        row=index+4; grade,group_name=_group_parts(member.group_code)
+        evaluation=evaluation_map.get((student.id,period)); ordinary,final=_evaluation_scores(evaluation)
+        ws.write(row,0,index,center); ws.write(row,1,student.full_name,text)
+        ws.write(row,2,grade,center); ws.write(row,3,group_name,center)
+        fields=['attendance_pts','materials_pts','delivery_pts','quality_pts','participation_pts','extra_pts']
+        for offset,field in enumerate(fields,4):
+            if evaluation is None: ws.write_blank(row,offset,None,center)
+            else: ws.write_number(row,offset,int(getattr(evaluation,field,0) or 0),center)
+        if evaluation is None:
+            ws.write_blank(row,10,None,center); ws.write_blank(row,11,None,score)
+        else:
+            ws.write_number(row,10,ordinary,total); ws.write_number(row,11,final,total)
+        ws.write(row,12,(evaluation.notes or '') if evaluation else '',text)
+    end_row=4+len(members)
+    if members:
+        ws.autofilter(4,0,end_row,12)
+        ws.conditional_format(5,11,end_row,11,{'type':'formula','criteria':'=AND(ISNUMBER(L6),L6<6)','format':wb.add_format({'bg_color':'#FCE8E6','font_color':'#B42318'})})
+        ws.conditional_format(5,11,end_row,11,{'type':'formula','criteria':'=AND(ISNUMBER(L6),L6>=6,L6<8)','format':wb.add_format({'bg_color':'#FFF3CD','font_color':'#7A4E00'})})
+        ws.conditional_format(5,11,end_row,11,{'type':'formula','criteria':'=AND(ISNUMBER(L6),L6>=8)','format':wb.add_format({'bg_color':'#E6F4EA','font_color':'#137333'})})
+    ws.set_column('A:A',6); ws.set_column('B:B',34); ws.set_column('C:D',10)
+    ws.set_column('E:J',15); ws.set_column('K:L',13); ws.set_column('M:M',34)
+    ws.freeze_panes(5,4); ws.set_landscape(); ws.fit_to_pages(1,0); ws.repeat_rows(0,4)
+    ws.write(end_row+2,0,'Las celdas vacías indican que todavía no se ha registrado evaluación para el periodo seleccionado.',note)
+
+    summary=wb.add_worksheet('CONCENTRADO')
+    summary.merge_range('A1:H1',(cfg.school or 'Sistema Escolar').upper(),title)
+    summary.merge_range('A2:H2',f'CONCENTRADO ANUAL · {club.kind}: {club.name}',subtitle)
+    summary.merge_range('A3:H3',f'CICLO ESCOLAR: {cfg.cycle}',subtitle)
+    summary_headers=['N/P','ESTUDIANTE','GRADO','GRUPO','PRIMER TRIMESTRE','SEGUNDO TRIMESTRE','TERCER TRIMESTRE','PROMEDIO']
+    for col,label in enumerate(summary_headers): summary.write(4,col,label,head)
+    summary.set_row(4,38)
+    for index,(member,student) in enumerate(members,1):
+        row=index+4; grade,group_name=_group_parts(member.group_code); period_scores=[]
+        summary.write(row,0,index,center); summary.write(row,1,student.full_name,text)
+        summary.write(row,2,grade,center); summary.write(row,3,group_name,center)
+        for offset,period_name in enumerate(PERIODS,4):
+            _,period_score=_evaluation_scores(evaluation_map.get((student.id,period_name)))
+            if period_score is None: summary.write_blank(row,offset,None,score)
+            else:
+                summary.write_number(row,offset,period_score,score); period_scores.append(period_score)
+        if period_scores: summary.write_number(row,7,sum(period_scores)/len(period_scores),total)
+        else: summary.write_blank(row,7,None,total)
+    summary_end=4+len(members)
+    if members:
+        summary.autofilter(4,0,summary_end,7)
+        summary.conditional_format(5,7,summary_end,7,{'type':'formula','criteria':'=AND(ISNUMBER(H6),H6<6)','format':wb.add_format({'bg_color':'#FCE8E6','font_color':'#B42318'})})
+    summary.set_column('A:A',6); summary.set_column('B:B',34); summary.set_column('C:D',10); summary.set_column('E:H',18)
+    summary.freeze_panes(5,4); summary.set_landscape(); summary.fit_to_pages(1,0); summary.repeat_rows(0,4)
+    summary.write(summary_end+2,0,'El promedio considera únicamente los trimestres con calificación registrada.',note)
+
+    wb.close(); out.seek(0); return out
+
+
 def _clubs_for_user():
     p=_profile(); q=ClubSport.query.filter_by(active=True)
     if p and p.role=='DOCENTE': q=q.filter_by(teacher_user_id=session.get('uid'))
@@ -111,7 +235,7 @@ def install(app):
     def clubs_home():
         if not _allowed(): return redirect('/')
         clubs=_clubs_for_user()
-        rows=''.join(f'<tr><td><b>{escape(c.name)}</b><br><span class="pill">{escape(c.kind)}</span></td><td>{ClubMember.query.filter_by(club_id=c.id,active=True).count()}</td><td class="actions"><a class="btn" href="/clubs/{c.id}">Abrir</a><a class="btn alt" href="/clubs/{c.id}/print" target="_blank">Lista imprimible</a></td></tr>' for c in clubs)
+        rows=''.join(f'<tr><td><b>{escape(c.name)}</b><br><span class="pill">{escape(c.kind)}</span></td><td>{ClubMember.query.filter_by(club_id=c.id,active=True).count()}</td><td class="actions"><a class="btn" href="/clubs/{c.id}">Abrir</a><a class="btn alt" href="/clubs/{c.id}/grades.xlsx">Exportar calificaciones</a><a class="btn alt" href="/clubs/{c.id}/print" target="_blank">Lista imprimible</a></td></tr>' for c in clubs)
         create='''<form method="post" action="/clubs/create" class="grid"><div><label>Nombre del club o deporte</label><input name="name" required placeholder="Ej. Banda de guerra, Fútbol"></div><div><label>Tipo</label><select name="kind"><option>CLUB</option><option>DEPORTE</option></select></div><div style="align-self:end"><button>Crear</button></div></form>'''
         body=f'<div class="card"><h2>Mis clubes y deportes</h2><p class="muted">Crea tu lista con estudiantes de cualquier grupo de la escuela, toma asistencia y evalúa con la rúbrica institucional.</p>{create}</div><div class="card scroll"><table><tr><th>Club / deporte</th><th>Integrantes</th><th>Acciones</th></tr>{rows or "<tr><td colspan=3>Aún no hay clubes o deportes.</td></tr>"}</table></div><div class="card"><a class="btn alt" href="/clubs/group-summary">Calificaciones e informes para maestro titular</a></div>'
         return _layout('Evaluación de Clubes y Deportes',body)
@@ -134,15 +258,80 @@ def install(app):
             smap=_student_map()
             for sid in selected:
                 if sid not in smap: continue
-                if sid in existing: existing[sid].active=True
+                if sid in existing:
+                    existing[sid].active=True; existing[sid].group_code=smap[sid][1]
                 else: core.db.session.add(ClubMember(club_id=cid,student_id=sid,group_code=smap[sid][1],active=True))
             for sid,m in existing.items():
                 if sid not in selected: m.active=False
             core.db.session.commit(); flash('Lista actualizada.')
         members={m.student_id:m for m in ClubMember.query.filter_by(club_id=cid,active=True).all()}
         opts=''.join(f'<label style="display:block;padding:7px;border-bottom:1px solid #eee"><input style="width:auto" type="checkbox" name="student_id" value="{s.id}" {"checked" if s.id in members else ""}> {escape(s.full_name)} · {escape(g)}</label>' for s,g in _all_students())
-        body=f'''<div class="card"><div class="actions no-print"><a class="btn" href="/clubs/{cid}/attendance">Pase de lista</a><a class="btn" href="/clubs/{cid}/evaluate">Evaluar con rúbrica</a><a class="btn alt" href="/clubs/{cid}/print" target="_blank">Lista imprimible</a></div><h2>{escape(club.name)}</h2><p>{len(members)} estudiante(s) seleccionado(s).</p></div><form method="post" class="card"><h2>Seleccionar estudiantes de toda la escuela</h2><div style="max-height:520px;overflow:auto">{opts}</div><br><button>Guardar lista</button></form>'''
+        grade_options=''.join(f'<option value="{n}">{n}.º</option>' for n in ('1','2','3'))
+        group_options=''.join(f'<option value="{letter}">{letter}</option>' for letter in ('A','B','C'))
+        manual_form=f'''<form method="post" action="/clubs/{cid}/students/create" class="card"><h2>Agregar alumno manualmente</h2><p class="muted">Registra al estudiante, asigna su grado y grupo y agrégalo directamente a este {escape((club.kind or 'club').lower())}.</p><div class="grid"><div><label>Nombre(s)</label><input name="names" required maxlength="120"></div><div><label>Apellido paterno</label><input name="paternal" required maxlength="80"></div><div><label>Apellido materno</label><input name="maternal" maxlength="80"></div><div><label>Grado</label><select name="grade_number" required>{grade_options}</select></div><div><label>Grupo</label><select name="group_name" required>{group_options}</select></div><div><label>Número de lista (opcional)</label><input name="list_no" type="number" min="1" max="99"></div><div style="align-self:end"><button>Agregar al {escape((club.kind or 'club').lower())}</button></div></div></form>'''
+        body=f'''<div class="card"><div class="actions no-print"><a class="btn" href="/clubs/{cid}/attendance">Pase de lista</a><a class="btn" href="/clubs/{cid}/evaluate">Evaluar con rúbrica</a><a class="btn alt" href="/clubs/{cid}/grades.xlsx">Exportar calificaciones</a><a class="btn alt" href="/clubs/{cid}/print" target="_blank">Lista imprimible</a></div><h2>{escape(club.name)}</h2><p>{len(members)} estudiante(s) seleccionado(s).</p></div>{manual_form}<form method="post" class="card"><h2>Seleccionar estudiantes ya registrados</h2><div style="max-height:520px;overflow:auto">{opts}</div><br><button>Guardar lista</button></form>'''
         return _layout(club.name,body)
+
+    @app.post('/clubs/<int:cid>/students/create')
+    def club_student_create(cid):
+        club=core.db.session.get(ClubSport,cid)
+        if not club or not _allowed(club): return redirect('/clubs')
+        names=' '.join(request.form.get('names','').split())
+        paternal=' '.join(request.form.get('paternal','').split())
+        maternal=' '.join(request.form.get('maternal','').split())
+        grade_number=request.form.get('grade_number','').strip()
+        group_name=request.form.get('group_name','').strip().upper()
+        group_code=f'{grade_number}{group_name}'
+        raw_list_no=request.form.get('list_no','').strip()
+        if not names or not paternal:
+            flash('Escribe al menos el nombre y el apellido paterno del alumno.')
+            return redirect(f'/clubs/{cid}')
+        if group_code not in gw.GROUP_MAP:
+            flash('Selecciona un grado y grupo válidos.')
+            return redirect(f'/clubs/{cid}')
+        try: list_no=int(raw_list_no) if raw_list_no else None
+        except ValueError: list_no=None
+        if list_no is not None and not 1 <= list_no <= 99:
+            flash('El número de lista debe estar entre 1 y 99.')
+            return redirect(f'/clubs/{cid}')
+
+        all_students=core.db.session.execute(
+            select(core.Student).execution_options(group_scope_disabled=True)
+        ).scalars().all()
+        candidate_key=_name_key(f'{paternal} {maternal} {names}')
+        student=next((row for row in all_students if _name_key(row.full_name)==candidate_key),None)
+        if student is not None:
+            tag=core.db.session.execute(
+                select(gw.RecordGroup).where(
+                    gw.RecordGroup.entity_type=='student',gw.RecordGroup.entity_id==student.id
+                ).execution_options(group_scope_disabled=True)
+            ).scalar_one_or_none()
+            current_code=tag.group_code if tag else '1A'
+            if current_code != group_code:
+                flash(f'El alumno ya existe en {current_code}. Selecciónalo en la lista o revisa primero su grupo registrado.')
+                return redirect(f'/clubs/{cid}')
+            student.status='ACTIVO'
+            if list_no is not None: student.list_no=list_no
+        else:
+            student=core.Student(names=names,paternal=paternal,maternal=maternal,status='ACTIVO',list_no=list_no)
+            core.db.session.add(student); core.db.session.flush()
+            tag=core.db.session.execute(
+                select(gw.RecordGroup).where(
+                    gw.RecordGroup.entity_type=='student',gw.RecordGroup.entity_id==student.id
+                ).execution_options(group_scope_disabled=True)
+            ).scalar_one_or_none()
+            if tag: tag.group_code=group_code
+            else: core.db.session.add(gw.RecordGroup(entity_type='student',entity_id=student.id,group_code=group_code))
+
+        member=ClubMember.query.filter_by(club_id=cid,student_id=student.id).first()
+        if member is None:
+            member=ClubMember(club_id=cid,student_id=student.id,group_code=group_code,active=True)
+            core.db.session.add(member)
+        else:
+            member.group_code=group_code; member.active=True
+        core.db.session.commit()
+        flash(f'{student.full_name} fue agregado a {club.name} en el grupo {group_code}.')
+        return redirect(f'/clubs/{cid}')
 
     @app.route('/clubs/<int:cid>/attendance', methods=['GET','POST'])
     def club_attendance(cid):
@@ -188,8 +377,21 @@ def install(app):
             cells=''.join(f'<td>{_select(f,getattr(e,f,0) or 0).replace("name=\""+f+"\"","name=\""+f+"_"+str(m.student_id)+"\"")}</td>' for f in RUBRIC)
             rows.append(f'<tr><td><b>{escape(smap[m.student_id][0].full_name)}</b><br>{escape(m.group_code)}</td>{cells}<td><b>{ordinary}/100</b></td><td><b>{final:.1f}</b></td><td><input name="notes_{m.student_id}" value="{escape(getattr(e,"notes","") or "")}"></td></tr>')
         pselect=''.join(f'<option {"selected" if p==period else ""}>{p}</option>' for p in PERIODS)
-        body=f'''<div class="card"><h2>Rúbrica institucional</h2><p>Asistencia 25 · Materiales/uniforme 15 · Entrega 20 · Calidad/desempeño 25 · Participación/colaboración/disciplina 15. Extra por eventos: +3, +5, +8 o +10. Calificación final máxima: 10.</p></div><form method="post"><div class="card no-print"><label>Periodo</label><select name="period" onchange="location.href='?period='+encodeURIComponent(this.value)">{pselect}</select></div><div class="card scroll"><table><tr><th>Estudiante</th><th>Asistencia</th><th>Materiales</th><th>Entrega</th><th>Calidad</th><th>Participación</th><th>Extra</th><th>Total</th><th>Calif.</th><th>Observaciones</th></tr>{''.join(rows)}</table><br><button>Guardar evaluaciones</button></div></form>'''
+        body=f'''<div class="card"><h2>Rúbrica institucional</h2><p>Asistencia 25 · Materiales/uniforme 15 · Entrega 20 · Calidad/desempeño 25 · Participación/colaboración/disciplina 15. Extra por eventos: +3, +5, +8 o +10. Calificación final máxima: 10.</p></div><form method="post"><div class="card no-print"><div class="actions" style="align-items:end"><label style="min-width:260px">Periodo<select name="period" onchange="location.href='?period='+encodeURIComponent(this.value)">{pselect}</select></label><a class="btn alt" href="/clubs/{cid}/grades.xlsx?period={quote(period)}">Exportar calificaciones a Excel</a></div></div><div class="card scroll"><table><tr><th>Estudiante</th><th>Asistencia</th><th>Materiales</th><th>Entrega</th><th>Calidad</th><th>Participación</th><th>Extra</th><th>Total</th><th>Calif.</th><th>Observaciones</th></tr>{''.join(rows)}</table><br><button>Guardar evaluaciones</button></div></form>'''
         return _layout('Evaluación · '+club.name,body)
+
+    @app.route('/clubs/<int:cid>/grades.xlsx')
+    def club_grades_excel(cid):
+        club=core.db.session.get(ClubSport,cid)
+        if not club or not _allowed(club): return redirect('/clubs')
+        period=request.args.get('period',PERIODS[0])
+        if period not in PERIODS: period=PERIODS[0]
+        return send_file(
+            _club_grades_workbook(club,period),
+            as_attachment=True,
+            download_name=f'Calificaciones_{_safe_filename(club.name)}_{_safe_filename(period)}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
 
     @app.route('/clubs/<int:cid>/print')
     def club_print(cid):
@@ -225,3 +427,4 @@ def install(app):
             card='<div class="card" style="margin-bottom:16px"><h2>Evaluación de Clubes y Deportes</h2><p class="muted">Listas de integrantes, asistencia, rúbrica institucional e informes para docentes titulares.</p><a class="btn" href="/clubs">Abrir módulo</a></div>'
             html=html.replace('<main class="wrap">','<main class="wrap">'+card,1)
         response.set_data(html); response.headers['Content-Length']=str(len(response.get_data())); return response
+
