@@ -5,7 +5,7 @@ from html import escape
 from urllib.parse import quote
 
 import xlsxwriter
-from flask import request, session, redirect, flash, send_file
+from flask import current_app, flash, get_flashed_messages, redirect, request, send_file, session
 from sqlalchemy import select
 
 import app as core
@@ -133,6 +133,44 @@ def _safe_filename(value):
     return cleaned[:60] or 'Club'
 
 
+def _student_group_code(student_id):
+    return core.db.session.execute(
+        select(gw.RecordGroup.group_code).where(
+            gw.RecordGroup.entity_type=='student',
+            gw.RecordGroup.entity_id==student_id,
+        ).execution_options(group_scope_disabled=True)
+    ).scalar_one_or_none()
+
+
+def _assign_student_group(student_id, group_code):
+    # Student records are tagged automatically with the active workspace after
+    # flush. Update that row directly so a second ORM insert cannot collide with
+    # the unique entity tag in PostgreSQL. Older untagged records are repaired.
+    table=gw.RecordGroup.__table__
+    result=core.db.session.execute(
+        table.update().where(
+            table.c.entity_type=='student',
+            table.c.entity_id==student_id,
+        ).values(group_code=group_code)
+    )
+    if result.rowcount==0:
+        core.db.session.execute(table.insert().values(
+            entity_type='student',entity_id=student_id,group_code=group_code
+        ))
+
+
+def _commit_changes(success_message, failure_message, log_message):
+    try:
+        core.db.session.commit()
+    except Exception:
+        core.db.session.rollback()
+        current_app.logger.exception(log_message)
+        flash(failure_message)
+        return False
+    flash(success_message)
+    return True
+
+
 def _club_grades_workbook(club,period):
     members=_club_members_data(club.id)
     student_ids=[student.id for _,student in members]
@@ -220,9 +258,13 @@ def _clubs_for_user():
 
 
 def _layout(title, body):
+    messages=''.join(
+        f'<div class="flash-message" role="alert">{escape(str(message))}</div>'
+        for message in get_flashed_messages()
+    )
     return f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)}</title><style>
-    :root{{--wine:#74142b;--wine2:#4f0d1d;--gold:#caa45f;--ink:#17233b;--bg:#f5f7fb}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink)}}header{{background:linear-gradient(135deg,var(--wine2),var(--wine));color:white;padding:18px 4vw}}header a{{color:white;text-decoration:none;font-weight:800}}main{{max-width:1450px;margin:auto;padding:22px}}.card{{background:white;border:1px solid #e3e7ef;border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 8px 24px #17233b0b}}h1,h2{{margin-top:0}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}}label{{font-size:12px;font-weight:800}}input,select,textarea{{width:100%;padding:10px;border:1px solid #ccd3df;border-radius:9px;background:white}}button,.btn{{border:0;border-radius:9px;padding:10px 14px;background:var(--wine);color:white;font-weight:800;text-decoration:none;display:inline-block;cursor:pointer}}.btn.alt{{background:white;color:var(--wine);border:1px solid var(--wine)}}table{{width:100%;border-collapse:collapse;font-size:13px}}th,td{{padding:9px;border-bottom:1px solid #e5e8ef;text-align:left;vertical-align:top}}th{{background:#f0f3f8}}.scroll{{overflow:auto}}.pill{{display:inline-block;padding:4px 8px;border-radius:99px;background:#f7e9ed;color:var(--wine);font-weight:800}}.actions{{display:flex;gap:8px;flex-wrap:wrap}}.muted{{color:#6c7483}}.quick-search{{display:grid;grid-template-columns:minmax(220px,520px) auto;align-items:end;gap:12px;margin:12px 0}}.quick-search input{{padding-left:38px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2374142b' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") no-repeat 12px center}}.quick-count{{font-size:12px;color:#6c7483;padding-bottom:10px}}.quick-empty{{padding:14px;border-radius:10px;background:#fff8ed;color:#744f08;font-weight:700}}@media(max-width:700px){{main{{padding:12px}}table{{min-width:900px}}.quick-search{{grid-template-columns:1fr}}.quick-count{{padding:0}}}}@media print{{header,.no-print{{display:none!important}}body{{background:white}}main{{max-width:none;padding:0}}.card{{box-shadow:none;border:0}}}}
-    </style></head><body><header><a href="/">← Sistema Escolar</a> &nbsp; / &nbsp; <b>Evaluación · Clubes y Deportes</b></header><main><h1>{escape(title)}</h1>{body}</main><script>
+    :root{{--wine:#74142b;--wine2:#4f0d1d;--gold:#caa45f;--ink:#17233b;--bg:#f5f7fb}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink)}}header{{background:linear-gradient(135deg,var(--wine2),var(--wine));color:white;padding:18px 4vw}}header a{{color:white;text-decoration:none;font-weight:800}}main{{max-width:1450px;margin:auto;padding:22px}}.card{{background:white;border:1px solid #e3e7ef;border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 8px 24px #17233b0b}}h1,h2{{margin-top:0}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}}label{{font-size:12px;font-weight:800}}input,select,textarea{{width:100%;padding:10px;border:1px solid #ccd3df;border-radius:9px;background:white}}button,.btn{{border:0;border-radius:9px;padding:10px 14px;background:var(--wine);color:white;font-weight:800;text-decoration:none;display:inline-block;cursor:pointer}}.btn.alt{{background:white;color:var(--wine);border:1px solid var(--wine)}}table{{width:100%;border-collapse:collapse;font-size:13px}}th,td{{padding:9px;border-bottom:1px solid #e5e8ef;text-align:left;vertical-align:top}}th{{background:#f0f3f8}}.scroll{{overflow:auto}}.pill{{display:inline-block;padding:4px 8px;border-radius:99px;background:#f7e9ed;color:var(--wine);font-weight:800}}.actions{{display:flex;gap:8px;flex-wrap:wrap}}.muted{{color:#6c7483}}.flash-message{{padding:12px 14px;margin:0 0 14px;border:1px solid #e6c66b;border-radius:12px;background:#fff7dc;color:#5d4210;font-weight:750}}.quick-search{{display:grid;grid-template-columns:minmax(220px,520px) auto;align-items:end;gap:12px;margin:12px 0}}.quick-search input{{padding-left:38px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2374142b' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") no-repeat 12px center}}.quick-count{{font-size:12px;color:#6c7483;padding-bottom:10px}}.quick-empty{{padding:14px;border-radius:10px;background:#fff8ed;color:#744f08;font-weight:700}}@media(max-width:700px){{main{{padding:12px}}table{{min-width:900px}}.quick-search{{grid-template-columns:1fr}}.quick-count{{padding:0}}}}@media print{{header,.no-print{{display:none!important}}body{{background:white}}main{{max-width:none;padding:0}}.card{{box-shadow:none;border:0}}}}
+    </style></head><body><header><a href="/">← Sistema Escolar</a> &nbsp; / &nbsp; <b>Evaluación · Clubes y Deportes</b></header><main><h1>{escape(title)}</h1>{messages}{body}</main><script>
     (()=>{{
       const clean=value=>(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
       document.querySelectorAll('[data-quick-filter]').forEach(input=>{{
@@ -263,7 +305,12 @@ def install(app):
         if not _allowed(): return redirect('/')
         name=request.form.get('name','').strip(); kind=request.form.get('kind','CLUB').strip()
         if name:
-            core.db.session.add(ClubSport(name=name,kind=kind,teacher_user_id=session['uid'])); core.db.session.commit()
+            core.db.session.add(ClubSport(name=name,kind=kind,teacher_user_id=session['uid']))
+            _commit_changes(
+                f'{name} fue creado correctamente.',
+                'No se pudo crear el club o deporte. Inténtalo nuevamente.',
+                'Error al crear un club o deporte.',
+            )
         return redirect('/clubs')
 
     @app.route('/clubs/<int:cid>', methods=['GET','POST'])
@@ -281,7 +328,12 @@ def install(app):
                 else: core.db.session.add(ClubMember(club_id=cid,student_id=sid,group_code=smap[sid][1],active=True))
             for sid,m in existing.items():
                 if sid not in selected: m.active=False
-            core.db.session.commit(); flash('Lista actualizada.')
+            _commit_changes(
+                'Lista actualizada.',
+                'No se pudo guardar la lista. No se perdió la selección; inténtalo nuevamente.',
+                f'Error al guardar integrantes del club {cid}.',
+            )
+            return redirect(f'/clubs/{cid}')
         members={m.student_id:m for m in ClubMember.query.filter_by(club_id=cid,active=True).all()}
         opts=''.join(f'<label class="quick-item" data-search="{escape(s.full_name+" "+g,quote=True)}" style="display:block;padding:7px;border-bottom:1px solid #eee"><input style="width:auto" type="checkbox" name="student_id" value="{s.id}" {"checked" if s.id in members else ""}> {escape(s.full_name)} · {escape(g)}</label>' for s,g in _all_students())
         grade_options=''.join(f'<option value="{n}">{n}.º</option>' for n in ('1','2','3'))
@@ -314,41 +366,38 @@ def install(app):
             flash('El número de lista debe estar entre 1 y 99.')
             return redirect(f'/clubs/{cid}')
 
-        all_students=core.db.session.execute(
-            select(core.Student).execution_options(group_scope_disabled=True)
-        ).scalars().all()
-        candidate_key=_name_key(f'{paternal} {maternal} {names}')
-        student=next((row for row in all_students if _name_key(row.full_name)==candidate_key),None)
-        if student is not None:
-            tag=core.db.session.execute(
-                select(gw.RecordGroup).where(
-                    gw.RecordGroup.entity_type=='student',gw.RecordGroup.entity_id==student.id
-                ).execution_options(group_scope_disabled=True)
-            ).scalar_one_or_none()
-            current_code=tag.group_code if tag else '1A'
-            if current_code != group_code:
-                flash(f'El alumno ya existe en {current_code}. Selecciónalo en la lista o revisa primero su grupo registrado.')
-                return redirect(f'/clubs/{cid}')
-            student.status='ACTIVO'
-            if list_no is not None: student.list_no=list_no
-        else:
-            student=core.Student(names=names,paternal=paternal,maternal=maternal,status='ACTIVO',list_no=list_no)
-            core.db.session.add(student); core.db.session.flush()
-            tag=core.db.session.execute(
-                select(gw.RecordGroup).where(
-                    gw.RecordGroup.entity_type=='student',gw.RecordGroup.entity_id==student.id
-                ).execution_options(group_scope_disabled=True)
-            ).scalar_one_or_none()
-            if tag: tag.group_code=group_code
-            else: core.db.session.add(gw.RecordGroup(entity_type='student',entity_id=student.id,group_code=group_code))
+        try:
+            all_students=core.db.session.execute(
+                select(core.Student).execution_options(group_scope_disabled=True)
+            ).scalars().all()
+            candidate_key=_name_key(f'{paternal} {maternal} {names}')
+            student=next((row for row in all_students if _name_key(row.full_name)==candidate_key),None)
+            if student is not None:
+                current_code=_student_group_code(student.id)
+                if current_code and current_code != group_code:
+                    flash(f'El alumno ya existe en {current_code}. Selecciónalo en la lista o revisa primero su grupo registrado.')
+                    return redirect(f'/clubs/{cid}')
+                student.status='ACTIVO'
+                if list_no is not None: student.list_no=list_no
+                if current_code is None: _assign_student_group(student.id,group_code)
+            else:
+                student=core.Student(names=names,paternal=paternal,maternal=maternal,status='ACTIVO',list_no=list_no)
+                core.db.session.add(student)
+                core.db.session.flush()
+                _assign_student_group(student.id,group_code)
 
-        member=ClubMember.query.filter_by(club_id=cid,student_id=student.id).first()
-        if member is None:
-            member=ClubMember(club_id=cid,student_id=student.id,group_code=group_code,active=True)
-            core.db.session.add(member)
-        else:
-            member.group_code=group_code; member.active=True
-        core.db.session.commit()
+            member=ClubMember.query.filter_by(club_id=cid,student_id=student.id).first()
+            if member is None:
+                member=ClubMember(club_id=cid,student_id=student.id,group_code=group_code,active=True)
+                core.db.session.add(member)
+            else:
+                member.group_code=group_code; member.active=True
+            core.db.session.commit()
+        except Exception:
+            core.db.session.rollback()
+            current_app.logger.exception('Error al guardar un alumno en el club %s.',cid)
+            flash('No se pudo guardar al alumno. Verifica sus datos e inténtalo nuevamente.')
+            return redirect(f'/clubs/{cid}')
         flash(f'{student.full_name} fue agregado a {club.name} en el grupo {group_code}.')
         return redirect(f'/clubs/{cid}')
 
