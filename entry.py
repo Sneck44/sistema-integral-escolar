@@ -128,6 +128,8 @@ install_clubs_sports(app)
 # club/deporte y grupo expresamente autorizados a cada docente.
 from clubs_permissions import install as install_clubs_permissions
 install_clubs_permissions(app)
+from club_attendance_matrix import install as install_club_attendance_matrix
+install_club_attendance_matrix(app)
 
 from icon_system import install as install_icon_system
 install_icon_system(app)
