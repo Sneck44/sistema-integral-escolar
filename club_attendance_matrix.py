@@ -5,7 +5,7 @@ from html import escape
 from urllib.parse import urlencode
 
 import xlsxwriter
-from flask import flash, redirect, request, send_file, session
+from flask import current_app, flash, redirect, request, send_file, session
 
 import attendance_list_export as group_attendance_export
 import clubs_sports as clubs
@@ -507,7 +507,7 @@ def _build_club_monthly_attendance(club, year, month):
     return output
 
 
-def _club_attendance_view(cid):
+def _club_attendance_view_enhanced(cid):
     club = clubs.core.db.session.get(clubs.ClubSport, cid)
     if not club or not clubs._allowed(club):
         return redirect('/clubs')
@@ -789,6 +789,139 @@ def _club_attendance_view(cid):
     return clubs._layout(f'Pase de lista · {club.name}', body)
 
 
+
+def _club_attendance_fallback(cid):
+    """Vista ligera para que el pase de lista siga disponible ante datos heredados."""
+    clubs.core.db.session.rollback()
+    club = clubs.core.db.session.get(clubs.ClubSport, cid)
+    if not club or not clubs._allowed(club):
+        return redirect('/clubs')
+
+    scheduled_weekday = _scheduled_weekday(club)
+    schedule_label = _schedule_label(club)
+    requested_day = _parse_day(
+        request.values.get('detail_day') or request.values.get('day'),
+        date.today(),
+    )
+    if requested_day > date.today():
+        requested_day = date.today()
+    selected_day = _nearest_scheduled_day(requested_day, scheduled_weekday)
+    members = clubs.ClubMember.query.filter_by(club_id=cid, active=True).all()
+    student_map = clubs._student_map()
+    can_edit = _can_edit(club)
+
+    if request.method == 'POST' and request.form.get('club_attendance_action') == 'fallback_save':
+        if not can_edit:
+            flash('Tu cuenta puede consultar este pase de lista, pero no modificarlo.')
+            return redirect(f'/clubs/{cid}/attendance?day={selected_day.isoformat()}')
+        existing = {
+            row.student_id: row
+            for row in clubs.ClubAttendance.query.filter_by(
+                club_id=cid,
+                day=selected_day,
+            ).all()
+        }
+        saved = 0
+        for member in members:
+            if member.student_id not in student_map:
+                continue
+            state = _normalize_state(
+                request.form.get(f'fallback_state_{member.student_id}')
+            )
+            if state not in STATE_META:
+                continue
+            row = existing.get(member.student_id)
+            if row is None:
+                row = clubs.ClubAttendance(
+                    club_id=cid,
+                    student_id=member.student_id,
+                    day=selected_day,
+                )
+                clubs.core.db.session.add(row)
+            row.state = state
+            saved += 1
+        try:
+            clubs.core.db.session.commit()
+            flash(f'Pase de lista guardado para {saved} integrante(s).')
+        except Exception:
+            clubs.core.db.session.rollback()
+            current_app.logger.exception(
+                'No se pudo guardar la vista compatible de asistencia del club %s.',
+                cid,
+            )
+            flash('No se pudo guardar el pase de lista. Inténtalo nuevamente.')
+        return redirect(f'/clubs/{cid}/attendance?day={selected_day.isoformat()}')
+
+    saved_rows = clubs.ClubAttendance.query.filter_by(
+        club_id=cid,
+        day=selected_day,
+    ).all()
+    saved_by_student = {row.student_id: _normalize_state(row.state) for row in saved_rows}
+    rows = []
+    for member in members:
+        item = student_map.get(member.student_id)
+        if not item:
+            continue
+        student, _ = item
+        selected = saved_by_student.get(student.id, '')
+        rows.append(
+            '<tr>'
+            f'<td><b>{escape(student.full_name)}</b></td>'
+            f'<td>{escape(_group_label(member))}</td>'
+            f'<td><select name="fallback_state_{student.id}"'
+            f'{" disabled" if not can_edit else ""}>'
+            f'{_state_options(selected)}</select></td>'
+            '</tr>'
+        )
+
+    submit = (
+        '<button type="submit">Guardar pase de lista</button>'
+        if can_edit and rows else ''
+    )
+    kind_label = escape((club.kind or 'CLUB').title())
+    body = f'''
+    <section class="club-att-heading">
+      <div><span class="pill">{kind_label}</span><h2>{escape(club.name)}</h2>
+      <p class="muted">Pase de lista · sesiones únicamente los {schedule_label}.</p></div>
+      <div class="actions no-print"><a class="btn alt" href="/clubs/{cid}">Volver a integrantes</a>
+      <a class="btn alt" href="/clubs/{cid}/attendance/list.xlsx">Formato Excel</a></div>
+    </section>
+    <div class="card">
+      <div class="club-att-notice schedule">
+        Se activó el modo compatible para cargar la asistencia sin interrumpir el servicio.
+      </div>
+      <form method="get" class="grid no-print">
+        <label>Fecha ({schedule_label})
+          <input type="date" name="day" value="{selected_day.isoformat()}"
+                 max="{date.today().isoformat()}" required>
+        </label>
+        <div style="align-self:end"><button type="submit">Cargar fecha</button></div>
+      </form>
+    </div>
+    <form method="post" class="card">
+      <input type="hidden" name="club_attendance_action" value="fallback_save">
+      <input type="hidden" name="day" value="{selected_day.isoformat()}">
+      <div class="scroll"><table>
+        <thead><tr><th>Integrante</th><th>Grupo</th><th>Asistencia</th></tr></thead>
+        <tbody>{''.join(rows) or '<tr><td colspan="3">No hay integrantes activos.</td></tr>'}</tbody>
+      </table></div>
+      <div style="margin-top:14px">{submit}</div>
+    </form>
+    '''
+    return clubs._layout(f'Pase de lista · {club.name}', body)
+
+
+def _club_attendance_view(cid):
+    try:
+        return _club_attendance_view_enhanced(cid)
+    except Exception:
+        current_app.logger.exception(
+            'Error al cargar el concentrado de asistencia del club %s; se usará la vista compatible.',
+            cid,
+        )
+        return _club_attendance_fallback(cid)
+
+
 def install(app):
     app.view_functions['club_attendance'] = _club_attendance_view
 
@@ -843,6 +976,15 @@ def install(app):
             or not session.get('uid')
             or not request.path.startswith('/clubs')
         ):
+            return response
+        path_parts = request.path.strip('/').split('/')
+        is_clubs_index = request.path == '/clubs'
+        is_club_detail = (
+            len(path_parts) == 2
+            and path_parts[0] == 'clubs'
+            and path_parts[1].isdigit()
+        )
+        if not (is_clubs_index or is_club_detail):
             return response
         html = response.get_data(as_text=True)
         for club in clubs._clubs_for_user():
