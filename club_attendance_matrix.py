@@ -1,9 +1,13 @@
+import calendar
+import io
 from datetime import date, datetime, timedelta
 from html import escape
 from urllib.parse import urlencode
 
-from flask import flash, redirect, request, session
+import xlsxwriter
+from flask import flash, redirect, request, send_file, session
 
+import attendance_list_export as group_attendance_export
 import clubs_sports as clubs
 import multi_user
 
@@ -199,6 +203,275 @@ def _summary_card(label, value, note, css_class=''):
     )
 
 
+
+
+def _responsible_name(club):
+    user_id = club.teacher_user_id
+    try:
+        import clubs_permissions
+        query = clubs_permissions.ClubDualAuthorization.query.filter_by(active=True)
+        if (club.kind or 'CLUB').strip().upper() == 'DEPORTE':
+            authorization = query.filter_by(sport_id=club.id).first()
+        else:
+            authorization = query.filter_by(club_id=club.id).first()
+        if authorization:
+            user_id = authorization.teacher_user_id
+    except Exception:
+        pass
+    profile = multi_user._profile(user_id)
+    return ((profile.full_name if profile else '') or 'DOCENTE RESPONSABLE').upper()
+
+
+def _club_header(ws, fmts, last_col, club, title, subtitle):
+    cfg = clubs.core.cfg()
+    group_attendance_export._insert_logo(ws, 'A1', 'left', 0.48, 0.48)
+    right_logo_col = max(4, last_col - 3)
+    group_attendance_export._insert_logo(
+        ws,
+        xlsxwriter.utility.xl_rowcol_to_cell(0, right_logo_col),
+        'right',
+        0.20,
+        0.20,
+    )
+    center_end = max(8, last_col - 4)
+    ws.merge_range(0, 6, 0, center_end, 'SUBSECRETARÍA DE EDUCACIÓN OBLIGATORIA', fmts['small'])
+    ws.merge_range(1, 6, 1, center_end, 'DIRECCIÓN GENERAL DE EDUCACIÓN BÁSICA PRIMER NIVEL', fmts['small'])
+    ws.merge_range(2, 6, 2, center_end, 'DIRECCIÓN DE EDUCACIÓN TELESECUNDARIA', fmts['small'])
+    ws.merge_range(3, 6, 3, center_end, 'TELESECUNDARIA “BENITO JUÁREZ”', fmts['small'])
+    split = max(8, last_col // 3)
+    ws.merge_range(6, 0, 6, split, 'TURNO: MATUTINO', fmts['meta'])
+    ws.merge_range(
+        6,
+        split + 1,
+        6,
+        last_col,
+        f'CICLO ESCOLAR: {group_attendance_export._cycle_text(cfg.cycle)}',
+        fmts['meta'],
+    )
+    ws.merge_range(7, 0, 7, last_col, 'LOCALIDAD: BERISTAIN, AHUAZOTEPEC, PUEBLA', fmts['meta'])
+    ws.merge_range(9, 1, 9, last_col, title, fmts['title'])
+    activity = f'{(club.kind or "CLUB").strip().upper()}: “{(club.name or "").strip().upper()}”'
+    if subtitle:
+        activity += f' · {subtitle}'
+    ws.merge_range(10, 0, 10, last_col, activity, fmts['group'])
+
+
+def _club_signature_block(ws, fmts, start_row, last_col, club):
+    left_start, left_end = 2, min(12, max(8, last_col // 3))
+    right_start, right_end = max(left_end + 2, last_col // 2), last_col
+    ws.merge_range(
+        start_row,
+        1,
+        start_row,
+        last_col - 1,
+        'BERISTAIN, AHUAZOTEPEC, PUE., A _______ DE _________________________ DE __________',
+        fmts['date'],
+    )
+    ws.merge_range(start_row + 2, left_start, start_row + 2, left_end, 'DOCENTE RESPONSABLE', fmts['sig'])
+    ws.merge_range(start_row + 2, right_start, start_row + 2, right_end, 'Vo. Bo.', fmts['sig'])
+    ws.merge_range(start_row + 3, right_start, start_row + 3, right_end, 'DIRECTORA DE LA ESCUELA', fmts['sig'])
+    ws.merge_range(start_row + 5, left_start, start_row + 5, left_end, '___________________________________________', fmts['sig'])
+    ws.merge_range(start_row + 5, right_start, start_row + 5, right_end, '_______________________________________', fmts['sig'])
+    ws.merge_range(start_row + 6, left_start, start_row + 6, left_end, _responsible_name(club), fmts['sig'])
+    ws.merge_range(
+        start_row + 6,
+        right_start,
+        start_row + 6,
+        right_end,
+        'MTRA. NELLY AZUCENA HERNÁNDEZ PICAZO',
+        fmts['sig'],
+    )
+    return start_row + 7
+
+
+def _build_club_attendance_list(club):
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+    sheet = workbook.add_worksheet('LISTA DE ASISTENCIA')
+    formats = group_attendance_export._base_formats(workbook)
+    last_col = 30
+
+    sheet.set_portrait()
+    sheet.set_paper(1)
+    sheet.set_margins(0.31, 0.23, 0.33, 0.02)
+    sheet.fit_to_pages(1, 1)
+    sheet.hide_gridlines(2)
+    sheet.set_column('A:A', 0.7)
+    sheet.set_column('B:B', 4.2)
+    sheet.set_column('C:C', 29)
+    sheet.set_column('D:D', 6.5)
+    sheet.set_column('E:AE', 1.9)
+    for row, height in enumerate([20, 18, 18, 18, 12]):
+        sheet.set_row(row, height)
+
+    _club_header(sheet, formats, last_col, club, 'REGISTRO DE ASISTENCIA', '')
+    sheet.merge_range('B13:B14', 'N/P', formats['head'])
+    sheet.merge_range('C13:C14', '          NOMBRE DEL INTEGRANTE', formats['head'])
+    sheet.merge_range('D13:D14', 'GRUPO', formats['head'])
+    for col in range(4, last_col + 1):
+        sheet.merge_range(12, col, 13, col, '', formats['head'])
+
+    members = _member_rows(club.id)
+    first_row = 14
+    data_rows = max(28, len(members))
+    for index in range(data_rows):
+        row = first_row + index
+        if index < len(members):
+            member, student = members[index]
+            number = index + 1
+            name = (student.full_name or '').upper()
+            group_label = _group_label(member)
+        else:
+            number, name, group_label = '', '', ''
+        sheet.write(row, 1, number, formats['num'])
+        sheet.write(row, 2, name, formats['name'])
+        sheet.write(row, 3, group_label, formats['num'])
+        for col in range(4, last_col + 1):
+            sheet.write_blank(row, col, None, formats['day'])
+        sheet.set_row(row, 18)
+
+    signature_end = _club_signature_block(
+        sheet,
+        formats,
+        first_row + data_rows + 1,
+        last_col,
+        club,
+    )
+    sheet.print_area(0, 0, signature_end, last_col)
+    workbook.close()
+    output.seek(0)
+    return output
+
+
+def _build_club_monthly_attendance(club, year, month):
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+    sheet = workbook.add_worksheet('CONCENTRADO MENSUAL')
+    formats = group_attendance_export._base_formats(workbook)
+    days_in_month = calendar.monthrange(year, month)[1]
+    first_day_col = 4
+    total_start = first_day_col + days_in_month
+    last_col = total_start + 4
+
+    sheet.set_landscape()
+    sheet.set_paper(1)
+    sheet.set_margins(0.20, 0.20, 0.28, 0.25)
+    sheet.fit_to_pages(1, 1)
+    sheet.hide_gridlines(2)
+    sheet.set_column(0, 0, 0.7)
+    sheet.set_column(1, 1, 4.2)
+    sheet.set_column(2, 2, 27)
+    sheet.set_column(3, 3, 6.5)
+    sheet.set_column(first_day_col, first_day_col + days_in_month - 1, 2.15)
+    sheet.set_column(total_start, last_col, 5.5)
+    for row, height in enumerate([20, 18, 18, 18, 12]):
+        sheet.set_row(row, height)
+
+    month_name = group_attendance_export.MONTHS_ES.get(month, str(month))
+    _club_header(
+        sheet,
+        formats,
+        last_col,
+        club,
+        'CONCENTRADO MENSUAL DE ASISTENCIA',
+        f'{month_name} {year}',
+    )
+
+    header_row = 12
+    sheet.write(header_row, 1, 'N/P', formats['head'])
+    sheet.write(header_row, 2, 'NOMBRE DEL INTEGRANTE', formats['head'])
+    sheet.write(header_row, 3, 'GRUPO', formats['head'])
+    for day_number in range(1, days_in_month + 1):
+        current_day = date(year, month, day_number)
+        label = f'{day_number}\n{calendar.day_abbr[current_day.weekday()][0].upper()}'
+        sheet.write(header_row, first_day_col + day_number - 1, label, formats['head'])
+    for offset, label in enumerate(['P', 'A', 'R', 'J', '% ASIST.']):
+        sheet.write(header_row, total_start + offset, label, formats['head'])
+    sheet.set_row(header_row, 30)
+
+    members = _member_rows(club.id)
+    student_ids = [student.id for _, student in members]
+    start = date(year, month, 1)
+    end = date(year, month, days_in_month)
+    attendance = _query_records(club.id, start, end, student_ids)
+    by_key = {(row.student_id, row.day.day): row for row in attendance}
+    recorded_days = sorted({row.day.day for row in attendance})
+
+    first_row = header_row + 1
+    data_rows = max(28, len(members))
+    for index in range(data_rows):
+        row_number = first_row + index
+        if index >= len(members):
+            sheet.write_blank(row_number, 1, None, formats['num'])
+            sheet.write_blank(row_number, 2, None, formats['name'])
+            sheet.write_blank(row_number, 3, None, formats['num'])
+            for col in range(first_day_col, last_col + 1):
+                sheet.write_blank(row_number, col, None, formats['day'])
+            continue
+
+        member, student = members[index]
+        sheet.write(row_number, 1, index + 1, formats['num'])
+        sheet.write(row_number, 2, (student.full_name or '').upper(), formats['name'])
+        sheet.write(row_number, 3, _group_label(member), formats['num'])
+        counts = {'P': 0, 'A': 0, 'R': 0, 'J': 0}
+        for day_number in range(1, days_in_month + 1):
+            current_day = date(year, month, day_number)
+            attendance_row = by_key.get((student.id, day_number))
+            state = _normalize_state(attendance_row.state) if attendance_row else ''
+            symbol = STATE_META.get(state, ('', ''))[0]
+            if symbol:
+                counts[symbol] += 1
+            cell_format = formats['weekend'] if current_day.weekday() >= 5 else formats['day']
+            sheet.write(
+                row_number,
+                first_day_col + day_number - 1,
+                symbol,
+                cell_format,
+            )
+        for offset, key in enumerate(['P', 'A', 'R', 'J']):
+            sheet.write(row_number, total_start + offset, counts[key], formats['num'])
+        considered = sum(counts.values())
+        attendance_value = (
+            (counts['P'] + counts['R'] + counts['J']) / considered
+            if considered else 0
+        )
+        sheet.write_number(row_number, total_start + 4, attendance_value, formats['pct'])
+        sheet.set_row(row_number, 18)
+
+    summary_row = first_row + data_rows + 1
+    sheet.merge_range(summary_row, 1, summary_row, 6, 'RESUMEN DEL MES', formats['head'])
+    sheet.merge_range(
+        summary_row + 1,
+        1,
+        summary_row + 1,
+        7,
+        f'Días con asistencia registrada: {len(recorded_days)}',
+        formats['meta'],
+    )
+    sheet.merge_range(
+        summary_row + 2,
+        1,
+        summary_row + 2,
+        min(last_col, 17),
+        'Clave: P = Presente · A = Ausente · R = Retardo · J = Justificada. '
+        'El porcentaje considera únicamente los días capturados para cada integrante.',
+        formats['meta'],
+    )
+    signature_end = _club_signature_block(
+        sheet,
+        formats,
+        summary_row + 4,
+        last_col,
+        club,
+    )
+    sheet.freeze_panes(first_row, first_day_col)
+    sheet.repeat_rows(0, header_row)
+    sheet.print_area(0, 0, signature_end, last_col)
+    workbook.close()
+    output.seek(0)
+    return output
+
+
 def _club_attendance_view(cid):
     club = clubs.core.db.session.get(clubs.ClubSport, cid)
     if not club or not clubs._allowed(club):
@@ -385,12 +658,13 @@ def _club_attendance_view(cid):
     .club-matrix-actions{{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;padding:15px 19px;border-top:1px solid #e5e8ef}}.club-matrix-actions button{{width:auto;min-width:220px}}
     .club-empty{{padding:28px!important;text-align:center!important;color:#6c7483}}.club-detail-card summary{{cursor:pointer;font-size:18px;font-weight:850;color:#74142b}}
     .club-detail-card summary small{{display:block;font-size:12px;font-weight:500;color:#6c7483;margin-top:5px}}.club-detail-toolbar{{display:grid;grid-template-columns:minmax(180px,260px) auto;gap:10px;align-items:end;margin:18px 0}}
+    .club-export-actions{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.club-export-actions form{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:0}.club-export-actions form label{min-width:120px}.club-export-actions form button{width:auto;min-height:42px}.club-excel-button{background:#217346!important}
     @media(max-width:900px){{.club-att-kpis{{grid-template-columns:repeat(2,minmax(0,1fr))}}.club-att-card-head,.club-att-heading{{align-items:flex-start;flex-direction:column}}.club-att-legend{{justify-content:flex-start}}}}
     @media(max-width:700px){{.club-range-form{{grid-template-columns:1fr 1fr}}.club-range-form button{{grid-column:1/-1}}.club-att-kpis{{gap:8px}}.club-att-kpi{{padding:12px}}.club-att-kpi b{{font-size:22px}}.club-sticky-name{{min-width:180px;max-width:180px}}.club-sticky-group{{left:228px}}.club-matrix-actions button{{width:100%;min-width:0}}.club-detail-toolbar{{grid-template-columns:1fr}}}}
     </style>
     <section class="club-att-heading">
       <div><span class="pill">{kind_label}</span><h2>{club_name}</h2><p class="muted">Pase de lista y concentrado de asistencia de sus integrantes.</p></div>
-      <div class="club-att-toolbar no-print"><a class="btn alt" href="/clubs/{cid}">Volver a integrantes</a><a class="btn alt" href="/clubs/{cid}/print" target="_blank">Lista imprimible</a><a class="btn" href="/clubs/{cid}/evaluate">Evaluar</a></div>
+      <div class="club-att-toolbar no-print"><a class="btn alt" href="/clubs/{cid}">Volver a integrantes</a><a class="btn alt" href="/clubs/{cid}/attendance/list.xlsx">Formato Excel</a><a class="btn" href="/clubs/{cid}/evaluate">Evaluar</a></div>
     </section>
     {notice_html}
     <div class="card no-print">
@@ -430,6 +704,20 @@ def _club_attendance_view(cid):
         <div style="margin-top:14px">{detail_submit}</div>
       </form>
     </details>
+
+    <div class="card attendance-list-card">
+      <h2>Exportar asistencia en Excel</h2>
+      <p class="muted">Los archivos conservan el mismo encabezado institucional, logotipos, firmas y configuración de impresión del pase de lista por grupo.</p>
+      <div class="club-export-actions no-print">
+        <a class="btn" href="/clubs/{cid}/attendance/list.xlsx">Generar lista para imprimir</a>
+        <form method="get" action="/clubs/{cid}/attendance/month.xlsx">
+          <label>Mes<select name="month">{''.join(f'<option value="{month}" {"selected" if month == date.today().month else ""}>{group_attendance_export.MONTHS_ES[month].title()}</option>' for month in range(1, 13))}</select></label>
+          <label>Año<input type="number" name="year" value="{date.today().year}" min="2020" max="2100"></label>
+          <button type="submit" class="club-excel-button">Generar concentrado mensual</button>
+        </form>
+      </div>
+    </div>
+
     <script>
     (() => {{
       const selects = document.querySelectorAll('.club-attendance-state');
@@ -450,12 +738,56 @@ def _club_attendance_view(cid):
 def install(app):
     app.view_functions['club_attendance'] = _club_attendance_view
 
+    @app.route('/clubs/<int:cid>/attendance/list.xlsx')
+    def club_attendance_list_xlsx(cid):
+        club = clubs.core.db.session.get(clubs.ClubSport, cid)
+        if not club or not clubs._allowed(club):
+            return redirect('/clubs')
+        filename = (
+            f'Lista_Asistencia_{clubs._safe_filename(club.name)}_'
+            f'{clubs._safe_filename(clubs.core.cfg().cycle)}.xlsx'
+        )
+        return send_file(
+            _build_club_attendance_list(club),
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+    @app.route('/clubs/<int:cid>/attendance/month.xlsx')
+    def club_attendance_month_xlsx(cid):
+        club = clubs.core.db.session.get(clubs.ClubSport, cid)
+        if not club or not clubs._allowed(club):
+            return redirect('/clubs')
+        today = date.today()
+        try:
+            year = int(request.args.get('year') or today.year)
+        except (TypeError, ValueError):
+            year = today.year
+        try:
+            month = int(request.args.get('month') or today.month)
+        except (TypeError, ValueError):
+            month = today.month
+        month = max(1, min(12, month))
+        year = max(2020, min(2100, year))
+        month_name = group_attendance_export.MONTHS_ES[month].title()
+        filename = (
+            f'Concentrado_Asistencia_{clubs._safe_filename(club.name)}_'
+            f'{clubs._safe_filename(month_name)}_{year}.xlsx'
+        )
+        return send_file(
+            _build_club_monthly_attendance(club, year, month),
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
     @app.after_request
     def club_attendance_shortcuts(response):
         if (
             'text/html' not in response.headers.get('Content-Type', '')
             or not session.get('uid')
-            or request.path != '/clubs'
+            or not request.path.startswith('/clubs')
         ):
             return response
         html = response.get_data(as_text=True)
@@ -464,6 +796,10 @@ def install(app):
             attendance_link = f'<a class="btn" href="/clubs/{club.id}/attendance">Pase de lista</a>'
             if marker in html and attendance_link not in html:
                 html = html.replace(marker, marker + attendance_link, 1)
+            old_print = f'<a class="btn alt" href="/clubs/{club.id}/print" target="_blank">Lista imprimible</a>'
+            excel_print = f'<a class="btn alt" href="/clubs/{club.id}/attendance/list.xlsx">Formato de asistencia</a>'
+            if old_print in html:
+                html = html.replace(old_print, excel_print, 1)
         response.set_data(html)
         response.headers['Content-Length'] = str(len(response.get_data()))
         return response
