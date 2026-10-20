@@ -52,14 +52,26 @@ def _range_from_request():
     return start, end, notices
 
 
-def _dates_in_range(start, end, recorded_days):
+def _scheduled_weekday(club):
+    return 1 if (club.kind or 'CLUB').strip().upper() == 'DEPORTE' else 4
+
+
+def _schedule_label(club):
+    return 'martes' if _scheduled_weekday(club) == 1 else 'viernes'
+
+
+def _dates_in_range(start, end, scheduled_weekday):
     result = []
     current = start
     while current <= end:
-        if current.weekday() < 5 or current in recorded_days:
+        if current.weekday() == scheduled_weekday:
             result.append(current)
         current += timedelta(days=1)
     return result
+
+
+def _nearest_scheduled_day(day, scheduled_weekday):
+    return day - timedelta(days=(day.weekday() - scheduled_weekday) % 7)
 
 
 def _state_options(selected, compact=False):
@@ -117,7 +129,12 @@ def _save_matrix(club, members, start, end):
     }
     allowed_dates = {
         day for day in allowed_dates
-        if day is not None and start <= day <= end and day <= date.today()
+        if (
+            day is not None
+            and start <= day <= end
+            and day <= date.today()
+            and day.weekday() == _scheduled_weekday(club)
+        )
     }
     if not allowed_dates:
         flash('No se recibieron fechas válidas para guardar.')
@@ -161,6 +178,12 @@ def _save_detail(club, members, start, end):
     detail_day = _parse_day(request.form.get('detail_day'), date.today())
     if detail_day > date.today():
         flash('No se puede registrar asistencia en una fecha futura.')
+        return _redirect_to_range(club.id, start, end)
+    if detail_day.weekday() != _scheduled_weekday(club):
+        flash(
+            f'La asistencia de este {(club.kind or "club").lower()} '
+            f'solo puede registrarse los {_schedule_label(club)}.'
+        )
         return _redirect_to_range(club.id, start, end)
 
     student_ids = [student.id for _, student in members]
@@ -304,7 +327,14 @@ def _build_club_attendance_list(club):
     for row, height in enumerate([20, 18, 18, 18, 12]):
         sheet.set_row(row, height)
 
-    _club_header(sheet, formats, last_col, club, 'REGISTRO DE ASISTENCIA', '')
+    _club_header(
+        sheet,
+        formats,
+        last_col,
+        club,
+        'REGISTRO DE ASISTENCIA',
+        f'SESIONES: {_schedule_label(club).upper()}',
+    )
     sheet.merge_range('B13:B14', 'N/P', formats['head'])
     sheet.merge_range('C13:C14', '          NOMBRE DEL INTEGRANTE', formats['head'])
     sheet.merge_range('D13:D14', 'GRUPO', formats['head'])
@@ -374,7 +404,7 @@ def _build_club_monthly_attendance(club, year, month):
         last_col,
         club,
         'CONCENTRADO MENSUAL DE ASISTENCIA',
-        f'{month_name} {year}',
+        f'{month_name} {year} · SESIONES: {_schedule_label(club).upper()}',
     )
 
     header_row = 12
@@ -395,7 +425,11 @@ def _build_club_monthly_attendance(club, year, month):
     end = date(year, month, days_in_month)
     attendance = _query_records(club.id, start, end, student_ids)
     by_key = {(row.student_id, row.day.day): row for row in attendance}
-    recorded_days = sorted({row.day.day for row in attendance})
+    scheduled_weekday = _scheduled_weekday(club)
+    recorded_days = sorted({
+        row.day.day for row in attendance
+        if row.day.weekday() == scheduled_weekday
+    })
 
     first_row = header_row + 1
     data_rows = max(28, len(members))
@@ -416,12 +450,13 @@ def _build_club_monthly_attendance(club, year, month):
         counts = {'P': 0, 'A': 0, 'R': 0, 'J': 0}
         for day_number in range(1, days_in_month + 1):
             current_day = date(year, month, day_number)
-            attendance_row = by_key.get((student.id, day_number))
+            is_session_day = current_day.weekday() == scheduled_weekday
+            attendance_row = by_key.get((student.id, day_number)) if is_session_day else None
             state = _normalize_state(attendance_row.state) if attendance_row else ''
             symbol = STATE_META.get(state, ('', ''))[0]
             if symbol:
                 counts[symbol] += 1
-            cell_format = formats['weekend'] if current_day.weekday() >= 5 else formats['day']
+            cell_format = formats['day'] if is_session_day else formats['weekend']
             sheet.write(
                 row_number,
                 first_day_col + day_number - 1,
@@ -445,7 +480,7 @@ def _build_club_monthly_attendance(club, year, month):
         1,
         summary_row + 1,
         7,
-        f'Días con asistencia registrada: {len(recorded_days)}',
+        f'Sesiones de {_schedule_label(club)} con asistencia registrada: {len(recorded_days)}',
         formats['meta'],
     )
     sheet.merge_range(
@@ -491,8 +526,9 @@ def _club_attendance_view(cid):
 
     student_ids = [student.id for _, student in members]
     records = _query_records(cid, start, end, student_ids)
-    recorded_days = {row.day for row in records}
-    days = _dates_in_range(start, end, recorded_days)
+    scheduled_weekday = _scheduled_weekday(club)
+    schedule_label = _schedule_label(club)
+    days = _dates_in_range(start, end, scheduled_weekday)
     by_key = {(row.student_id, row.day): row for row in records}
 
     totals = {state: 0 for state in STATE_META}
@@ -576,8 +612,15 @@ def _club_attendance_view(cid):
     else:
         empty_row = ''
 
-    notice_html = ''.join(
-        f'<div class="club-att-notice">{escape(message)}</div>' for message in notices
+    notice_html = (
+        f'<div class="club-att-notice schedule">'
+        f'Calendario de este {(club.kind or "club").lower()}: '
+        f'<b>asistencia únicamente los {schedule_label}</b>.'
+        f'</div>'
+        + ''.join(
+            f'<div class="club-att-notice">{escape(message)}</div>'
+            for message in notices
+        )
     )
     if not can_edit:
         notice_html += '<div class="club-att-notice readonly">Modo consulta: solo el administrador o el docente autorizado puede registrar asistencia.</div>'
@@ -593,6 +636,7 @@ def _club_attendance_view(cid):
     detail_day = _parse_day(request.args.get('detail_day'), end)
     if detail_day > date.today():
         detail_day = date.today()
+    detail_day = _nearest_scheduled_day(detail_day, scheduled_weekday)
     detail_records = {
         row.student_id: row
         for row in _query_records(cid, detail_day, detail_day, student_ids)
@@ -631,7 +675,7 @@ def _club_attendance_view(cid):
     .club-att-heading h2{{margin:0 0 5px}}.club-att-heading p{{margin:0}}
     .club-att-toolbar{{display:flex;gap:8px;flex-wrap:wrap}}.club-range-form{{display:grid;grid-template-columns:minmax(155px,1fr) minmax(155px,1fr) auto;gap:12px;align-items:end}}
     .club-att-notice{{padding:10px 13px;border-radius:12px;background:#fff7df;border:1px solid #efd697;color:#76530b;margin:0 0 12px;font-size:13px;font-weight:700}}
-    .club-att-notice.readonly{{background:#f3f5f8;border-color:#dbe0e7;color:#5e6672}}
+    .club-att-notice.readonly{{background:#f3f5f8;border-color:#dbe0e7;color:#5e6672}}.club-att-notice.schedule{{background:#edf3ff;border-color:#adc3eb;color:#315a9a}}
     .club-att-kpis{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 16px}}
     .club-att-kpi{{background:#fff;border:1px solid #e3e7ef;border-radius:16px;padding:15px;box-shadow:0 7px 22px rgba(23,35,59,.05)}}
     .club-att-kpi span,.club-att-kpi small{{display:block;color:#6c7483}}.club-att-kpi span{{font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.35px}}
@@ -663,7 +707,7 @@ def _club_attendance_view(cid):
     @media(max-width:700px){{.club-range-form{{grid-template-columns:1fr 1fr}}.club-range-form button{{grid-column:1/-1}}.club-att-kpis{{gap:8px}}.club-att-kpi{{padding:12px}}.club-att-kpi b{{font-size:22px}}.club-sticky-name{{min-width:180px;max-width:180px}}.club-sticky-group{{left:228px}}.club-matrix-actions button{{width:100%;min-width:0}}.club-detail-toolbar{{grid-template-columns:1fr}}}}
     </style>
     <section class="club-att-heading">
-      <div><span class="pill">{kind_label}</span><h2>{club_name}</h2><p class="muted">Pase de lista y concentrado de asistencia de sus integrantes.</p></div>
+      <div><span class="pill">{kind_label}</span><h2>{club_name}</h2><p class="muted">Pase de lista y concentrado de asistencia · sesiones los {schedule_label}.</p></div>
       <div class="club-att-toolbar no-print"><a class="btn alt" href="/clubs/{cid}">Volver a integrantes</a><a class="btn alt" href="/clubs/{cid}/attendance/list.xlsx">Formato Excel</a><a class="btn" href="/clubs/{cid}/evaluate">Evaluar</a></div>
     </section>
     {notice_html}
@@ -694,7 +738,7 @@ def _club_attendance_view(cid):
       <summary>Captura detallada por fecha<small>Edita estados y observaciones individuales sin perder el concentrado.</small></summary>
       <form method="get" class="club-detail-toolbar no-print">
         <input type="hidden" name="from" value="{start.isoformat()}"><input type="hidden" name="to" value="{end.isoformat()}">
-        <label>Fecha para detalle<input type="date" name="detail_day" value="{detail_day.isoformat()}" max="{date.today().isoformat()}" required></label>
+        <label>Fecha para detalle ({schedule_label})<input id="club-detail-day" type="date" name="detail_day" value="{detail_day.isoformat()}" data-last-valid="{detail_day.isoformat()}" data-weekday="{(scheduled_weekday + 1) % 7}" max="{date.today().isoformat()}" required></label>
         <button type="submit">Cargar detalle</button>
       </form>
       <form method="post">
@@ -728,6 +772,16 @@ def _club_attendance_view(cid):
         selects.forEach(select => {{
           if (!select.value && !select.disabled) {{ select.value = 'PRESENTE'; paint(select); }}
         }});
+      }});
+      const detailDay = document.getElementById('club-detail-day');
+      if (detailDay) detailDay.addEventListener('change', () => {{
+        const selected = new Date(detailDay.value + 'T12:00:00Z');
+        if (selected.getUTCDay() !== Number(detailDay.dataset.weekday)) {{
+          alert('Selecciona un ' + '{schedule_label}' + ' para registrar la asistencia.');
+          detailDay.value = detailDay.dataset.lastValid;
+        }} else {{
+          detailDay.dataset.lastValid = detailDay.value;
+        }}
       }});
     }})();
     </script>
