@@ -1,9 +1,255 @@
 from html import escape
 from datetime import datetime
+import json
+import math
+import secrets
 
-from flask import request, redirect, flash, session
+from flask import request, redirect, flash, session, current_app
 
 import app as core
+
+
+def _grid_value(grade):
+    if not grade:
+        return ''
+    return (grade.code or '').upper() or (str(grade.score) if grade.score is not None else '')
+
+
+def _grid_can_edit():
+    import multi_user
+    import group_workspaces
+    profile = multi_user._profile(session.get('uid'))
+    return bool(profile and profile.active and profile.role in ('ADMIN', 'DOCENTE')
+                and group_workspaces.active_group_code())
+
+
+def _save_grade_grid():
+    import group_workspaces
+    from flask import jsonify
+    def fail(message, status=400):
+        return jsonify(ok=False, message=message), status
+    if not _grid_can_edit():
+        return fail('No tienes permiso para modificar estas calificaciones.', 403)
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return fail('Solicitud inválida.')
+    token = session.get('grade_grid_csrf')
+    if not token or payload.get('csrf') != token:
+        return fail('La sesión cambió. Recarga la página antes de guardar.', 403)
+    if payload.get('group') != group_workspaces.active_group_code():
+        return fail('El grupo activo cambió. Abre nuevamente el concentrado.', 409)
+    changes = payload.get('changes')
+    if not isinstance(changes, list) or not changes or len(changes) > 10000:
+        return fail('Envía entre 1 y 10000 cambios por guardado.')
+    students = {s.id for s in core.Student.query.filter_by(status='ACTIVO').all()}
+    activities = {a.id: a for a in core.Activity.query.all()}
+    parsed = {}
+    for change in changes:
+        if not isinstance(change, dict):
+            return fail('Cambio inválido.')
+        sid, aid = change.get('student'), change.get('activity')
+        if type(sid) is not int or type(aid) is not int or sid not in students or aid not in activities:
+            return fail('Una actividad o alumno ya no pertenece al grupo activo.', 403)
+        key = (sid, aid)
+        if key in parsed or not isinstance(change.get('value'), str) or not isinstance(change.get('original'), str):
+            return fail('Hay celdas duplicadas o inválidas.')
+        raw = change['value'].strip().upper()
+        score, code = None, ''
+        if raw in ('NP', 'NE', 'J', 'P'):
+            code = raw
+        elif raw:
+            try:
+                score = float(raw.replace(',', '.'))
+            except ValueError:
+                return fail('Usa un número válido o NP, NE, J, P.')
+            maximum = activities[aid].max_score
+            if not maximum or not math.isfinite(maximum) or maximum <= 0 or not math.isfinite(score) or not 0 <= score <= maximum:
+                return fail(f'La calificación de {activities[aid].name} debe estar entre 0 y {maximum}.')
+        parsed[key] = (score, code, change['original'])
+    try:
+        # Bloquea las actividades en orden para serializar guardados de esta tabla.
+        core.Activity.query.filter(core.Activity.id.in_(sorted({a for _, a in parsed}))).order_by(core.Activity.id).with_for_update().all()
+        rows = core.Grade.query.filter(
+            core.Grade.student_id.in_({s for s, _ in parsed}),
+            core.Grade.activity_id.in_({a for _, a in parsed}),
+        ).with_for_update().all()
+        existing = {(g.student_id, g.activity_id): g for g in rows}
+        for key, (_, _, original) in parsed.items():
+            if _grid_value(existing.get(key)) != original:
+                core.db.session.rollback()
+                return fail('Otra captura modificó una de estas celdas. Tus cambios siguen visibles; recarga y revisa antes de guardar.', 409)
+        saved = []
+        for (sid, aid), (score, code, _) in parsed.items():
+            grade = existing.get((sid, aid))
+            if grade is None and (score is not None or code):
+                grade = core.Grade(student_id=sid, activity_id=aid)
+                core.db.session.add(grade)
+            if grade is not None:
+                grade.score, grade.code = score, code
+            saved.append(dict(student=sid, activity=aid, value=_grid_value(grade)))
+        core.db.session.commit()
+    except Exception:
+        core.db.session.rollback()
+        current_app.logger.exception('Error al guardar el concentrado de actividades')
+        return fail('No se guardaron los cambios. Tus capturas siguen visibles; intenta nuevamente.', 500)
+    return jsonify(ok=True, message=f'Guardadas {len(saved)} calificaciones.', saved=saved)
+
+
+def _grade_grid():
+    import group_workspaces
+    from academic_grade_reports import _subject_order_key
+    trimester = request.args.get('grid_trim', '')
+    if trimester not in core.TRIMS:
+        trimester = ''
+    subject_id = request.args.get('grid_subject', type=int)
+    subjects = sorted(core.Subject.query.all(), key=_subject_order_key)
+    if subject_id not in {s.id for s in subjects}:
+        subject_id = None
+    query = core.Activity.query
+    if trimester:
+        query = query.filter_by(trimester=trimester)
+    activities = query.order_by(core.Activity.activity_date, core.Activity.id).all()
+    links = ActivitySubject.query.filter(ActivitySubject.activity_id.in_([a.id for a in activities])).all() if activities else []
+    subject_map = {a.id: {a.subject_id} for a in activities}
+    for link in links:
+        subject_map[link.activity_id].add(link.subject_id)
+    if subject_id:
+        activities = [a for a in activities if subject_id in subject_map[a.id]]
+    visible_subjects = [s for s in subjects if not subject_id or s.id == subject_id]
+    students = core.Student.query.filter_by(status='ACTIVO').order_by(core.Student.list_no, core.Student.paternal, core.Student.maternal, core.Student.names).all()
+    grades = core.Grade.query.filter(core.Grade.activity_id.in_([a.id for a in activities]),
+                                     core.Grade.student_id.in_([s.id for s in students])).all() if activities and students else []
+    grade_map = {(g.student_id, g.activity_id): g for g in grades}
+    editable = _grid_can_edit()
+    session.setdefault('grade_grid_csrf', secrets.token_urlsafe(32))
+    esc = lambda value: escape(str(value), quote=True)
+    trim_options = '<option value="">Todos los trimestres</option>' + ''.join(
+        f'<option value="{esc(t)}" {"selected" if t == trimester else ""}>{esc(t)}</option>' for t in core.TRIMS)
+    subject_options = '<option value="">Todas las asignaturas</option>' + ''.join(
+        f'<option value="{s.id}" {"selected" if s.id == subject_id else ""}>{esc(s.name)}</option>' for s in subjects)
+    names = {s.id: s.name for s in subjects}
+    headers = ''.join(
+        f'<th>{esc(a.name)}<small>{esc(" · ".join(names[s] for s in sorted(subject_map[a.id]) if s in names))}</small>'
+        f'<small>{esc(a.trimester)} · Máx. {esc(a.max_score)}</small></th>' for a in activities)
+    headers += ''.join(f'<th class="grid-average">Promedio<small>{esc(s.name)}</small></th>' for s in visible_subjects)
+    rows = []
+    for student in students:
+        cells = []
+        for a in activities:
+            value = _grid_value(grade_map.get((student.id, a.id)))
+            cells.append(f'<td><input class="grid-mark" aria-label="{esc(student.full_name)}: {esc(a.name)}" '
+                         f'data-student="{student.id}" data-activity="{a.id}" data-original="{esc(value)}" '
+                         f'data-subjects="{esc(json.dumps(sorted(subject_map[a.id])))}" data-max="{esc(a.max_score)}" '
+                         f'value="{esc(value)}" placeholder="—" {"readonly" if not editable else ""}></td>')
+        for subject in visible_subjects:
+            nums = []
+            for a in activities:
+                g = grade_map.get((student.id, a.id))
+                if subject.id in subject_map[a.id] and g and g.score is not None and a.max_score and a.max_score > 0:
+                    nums.append(max(0, min(10, g.score / a.max_score * 10)))
+            avg = sum(nums) / len(nums) if nums else None
+            cells.append(f'<td class="grid-average {"grid-risk" if avg is not None and avg < 6 else ""}" data-average="{subject.id}">'
+                         f'{"—" if avg is None else f"{avg:.2f}"}</td>')
+        rows.append(f'<tr data-grid-student="{esc(student.full_name.lower())}"><td class="grid-student">{student.list_no or ""} · {esc(student.full_name)}</td>{"".join(cells)}</tr>')
+    table = f'<table><thead><tr><th class="grid-student">Alumno</th>{headers}</tr></thead><tbody>{"".join(rows)}</tbody></table>' if students else '<p>No hay alumnos activos en este grupo.</p>'
+    return GRADE_GRID_CSS + f'''
+    <section class="card" id="grade-grid">
+      <h2>Concentrado de calificaciones</h2>
+      <p>Grupo {esc(group_workspaces.active_group_label())} · {len(students)} alumnos · {len(activities)} actividades.</p>
+      <form method="get" action="/activities#grade-grid" class="grade-grid-filters">
+        <label>Trimestre<select name="grid_trim">{trim_options}</select></label>
+        <label>Asignatura<select name="grid_subject">{subject_options}</select></label>
+        <button>Mostrar concentrado</button>
+      </form>
+      <label>Buscar alumno<input id="grid-search" type="search" placeholder="Nombre o apellidos"></label>
+      <p class="muted">Captura el puntaje de cada actividad o NP, NE, J, P. Vacío = sin calificar.
+      Los promedios usan solo notas numéricas, normalizadas a 10; cada actividad cuenta en todas sus asignaturas.
+      Rojo = promedio menor a 6. Los promedios se actualizan mientras editas; guarda para confirmar.</p>
+      {'' if activities else '<p>No hay actividades para los filtros seleccionados.</p>'}
+      <div class="grade-grid-scroll">{table}</div>
+      <div class="grade-grid-actions"><span id="grid-message" role="status" aria-live="polite">Sin cambios pendientes.</span>
+        {'<button type="button" id="grid-save" disabled>Guardar calificaciones</button>' if editable else '<span>Modo consulta</span>'}
+      </div>
+      <noscript>Activa JavaScript para editar el concentrado.</noscript>
+      <input type="hidden" id="grid-csrf" value="{esc(session['grade_grid_csrf'])}">
+      <input type="hidden" id="grid-group" value="{esc(group_workspaces.active_group_code())}">
+    </section>''' + GRADE_GRID_JS
+
+
+GRADE_GRID_CSS = '''<style>
+#grade-grid .grade-grid-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:16px}
+#grade-grid .grade-grid-filters label{flex:1;min-width:180px}
+#grade-grid button{width:auto}#grid-search{max-width:420px}
+.grade-grid-scroll{overflow:auto;max-height:65vh;border:1px solid #e4dce0;border-radius:12px}
+#grade-grid table{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0}
+#grade-grid th,#grade-grid td{min-width:125px;border-right:1px solid #eee;padding:10px}
+#grade-grid th{position:sticky;top:0;z-index:2;background:#f4ecef;max-width:200px}
+#grade-grid th small{display:block;font-weight:400;margin-top:5px;white-space:normal}
+#grade-grid .grid-student{position:sticky;left:0;min-width:230px;max-width:280px;z-index:1;background:white}
+#grade-grid th.grid-student{z-index:3;background:#f4ecef}
+#grade-grid .grid-mark{width:100px;min-width:80px;padding:8px}
+#grade-grid .grid-mark.grid-dirty{background:#fff4cd;border-color:#c18a19}
+#grade-grid .grid-average{background:#f0f6f3;font-weight:800;text-align:center}
+#grade-grid .grid-risk{background:#fde7e7;color:#ac2323}
+.grade-grid-actions{display:flex;gap:15px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:16px}
+</style>'''
+
+
+GRADE_GRID_JS = r'''<script>
+(() => {
+ const root=document.getElementById('grade-grid'); if(!root)return;
+ const inputs=[...root.querySelectorAll('.grid-mark')], button=root.querySelector('#grid-save'), message=root.querySelector('#grid-message');
+ let busy=false;
+ const changed=()=>inputs.filter(i=>i.value!==i.dataset.original);
+ const update=()=>{
+   const count=changed().length;
+   if(button)button.disabled=busy||!count;
+   message.textContent=count?count+' cambios sin guardar.':'Sin cambios pendientes.';
+ };
+ const average=row=>{
+   const marks=[...row.querySelectorAll('.grid-mark')];
+   row.querySelectorAll('[data-average]').forEach(cell=>{
+     const values=marks.filter(i=>JSON.parse(i.dataset.subjects).includes(Number(cell.dataset.average))).map(i=>{
+       const raw=i.value.trim().replace(',','.'), max=Number(i.dataset.max), val=Number(raw);
+       return raw && Number.isFinite(val) && max>0 && val>=0 && val<=max ? val/max*10 : null;
+     }).filter(v=>v!==null);
+     const value=values.length?values.reduce((a,b)=>a+b,0)/values.length:null;
+     cell.textContent=value===null?'—':value.toFixed(2);
+     cell.classList.toggle('grid-risk',value!==null&&value<6);
+   });
+ };
+ inputs.forEach(i=>i.addEventListener('input',()=>{i.classList.toggle('grid-dirty',i.value!==i.dataset.original);average(i.closest('tr'));update();}));
+ root.querySelector('#grid-search').addEventListener('input',e=>{
+   const clean=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+   root.querySelectorAll('[data-grid-student]').forEach(row=>row.hidden=!clean(row.dataset.gridStudent).includes(clean(e.target.value)));
+ });
+ window.addEventListener('beforeunload',e=>{if(changed().length){e.preventDefault();e.returnValue='';}});
+ root.querySelector('form').addEventListener('submit',e=>{if(changed().length&&!confirm('Hay cambios sin guardar. ¿Deseas cambiar los filtros y descartarlos?'))e.preventDefault();});
+ if(button)button.addEventListener('click',async()=>{
+   const edits=changed(); if(!edits.length||busy)return;
+   const invalid=edits.find(i=>{
+     const raw=i.value.trim().toUpperCase(), n=Number(raw.replace(',','.')), max=Number(i.dataset.max);
+     return raw&&!['NP','NE','J','P'].includes(raw)&&(!Number.isFinite(n)||!Number.isFinite(max)||max<=0||n<0||n>max);
+   });
+   if(invalid){message.textContent='Revisa la celda: usa un puntaje entre 0 y su máximo, o NP, NE, J, P.';invalid.focus();return;}
+   busy=true;button.disabled=true;inputs.forEach(i=>i.disabled=true);message.textContent='Guardando…';
+   try{
+     const response=await fetch('/activities?grade_grid_save=1',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({csrf:root.querySelector('#grid-csrf').value,group:root.querySelector('#grid-group').value,
+         changes:edits.map(i=>({student:Number(i.dataset.student),activity:Number(i.dataset.activity),value:i.value,original:i.dataset.original}))})});
+     if(response.redirected)throw new Error('La sesión o los permisos cambiaron. Tus capturas siguen visibles; inicia sesión antes de reintentar.');
+     const data=await response.json();
+     if(!response.ok||!data.ok)throw new Error(data.message||'No fue posible guardar.');
+     data.saved.forEach(g=>{
+       const i=inputs.find(i=>Number(i.dataset.student)===g.student&&Number(i.dataset.activity)===g.activity);
+       i.value=g.value;i.dataset.original=g.value;i.classList.remove('grid-dirty');average(i.closest('tr'));
+     });
+     message.textContent=data.message;
+   }catch(error){message.textContent=error.message+' Los cambios permanecen en la tabla.';}
+   finally{busy=false;inputs.forEach(i=>i.disabled=false);button.disabled=!changed().length;}
+ });
+})();
+</script>'''
 
 
 class ActivitySubject(core.db.Model):
@@ -162,6 +408,8 @@ def install(app):
         if r:
             return r
 
+        if request.method == 'POST' and request.args.get('grade_grid_save') == '1':
+            return _save_grade_grid()
         subjects = core.Subject.query.order_by(core.Subject.name).all()
         if request.method == 'POST':
             name = request.form.get('name', '').strip()
@@ -247,6 +495,7 @@ def install(app):
         body = f'''
         {ACTIVITY_CSS}
         <h1>Actividades</h1>
+        {_grade_grid()}
         <div class="card">
           <h2>Crear actividad</h2>
           <form method="post" class="grid">
@@ -489,3 +738,4 @@ def install(app):
           <p style="margin-top:16px"><a href="/activities">Cancelar y volver</a></p>
         </div>'''
         return core.page('Borrar actividad', body)
+
