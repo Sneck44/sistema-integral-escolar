@@ -143,7 +143,34 @@ def _can_capture():
 
 def _can_export():
     profile = _profile()
-    return bool(profile and profile.active and profile.role in ('ADMIN', 'DIRECCION'))
+    return bool(profile and profile.active and profile.role in ('ADMIN', 'DIRECCION', 'DOCENTE'))
+
+
+def _export_data(scope, skill='', student_id=None):
+    """Authorize by the student's group, including legacy assessment records."""
+    import group_workspaces as gw
+    if not _can_export():
+        raise ValueError('Tu cuenta no tiene permiso para descargar resultados SiSAT.')
+    profile = _profile()
+    group = _active_group()
+    if profile.role == 'DOCENTE':
+        group = gw._teacher_group_code(session.get('uid'))
+        if not group:
+            raise ValueError('Solicita al administrador que asigne tu grupo antes de descargar resultados.')
+        if scope == 'school':
+            raise ValueError('Los docentes pueden descargar resultados de su grupo o de sus alumnos, no de toda la escuela.')
+    query = core.Student.query.execution_options(group_scope_disabled=True)
+    if scope == 'group' or profile.role == 'DOCENTE':
+        ids = core.db.session.query(gw.RecordGroup.entity_id).filter_by(entity_type='student', group_code=group)
+        query = query.filter(core.Student.id.in_(ids))
+    if scope == 'student':
+        query = query.filter(core.Student.id == student_id)
+    students = query.all()
+    ids = [student.id for student in students]
+    assessments = SisatAssessment.query.execution_options(group_scope_disabled=True).filter(SisatAssessment.student_id.in_(ids))
+    if skill in SKILLS:
+        assessments = assessments.filter_by(skill=skill)
+    return assessments.order_by(SisatAssessment.application_date, SisatAssessment.id).all(), students
 
 
 def _level(skill, total):
@@ -358,20 +385,11 @@ def _import_capture_workbook(file_storage):
 
 
 def _export_workbook(scope, skill='', student_id=None):
-    assessments = _all_assessments()
-    students = _all_students()
-    groups = _student_groups()
+    assessments, students = _export_data(scope, skill, student_id)
     active_group = _active_group()
-    if scope == 'group':
-        allowed_ids = {student.id for student in students if groups.get(student.id) == active_group}
-        assessments = [row for row in assessments if row.student_id in allowed_ids]
-        students = [student for student in students if student.id in allowed_ids]
-    elif scope == 'student':
-        assessments = [row for row in assessments if row.student_id == student_id]
-        students = [student for student in students if student.id == student_id]
-    if skill in SKILLS:
-        assessments = [row for row in assessments if row.skill == skill]
     rows = _summary_rows(assessments, students)
+    if not rows:
+        raise ValueError('No hay resultados SiSAT registrados para esta selección. Captura o importa los resultados y vuelve a descargarlos.')
 
     output = io.BytesIO(); wb = xlsxwriter.Workbook(output, {'in_memory': True, 'strings_to_formulas': False, 'strings_to_urls': False})
     school_config = core.cfg()
@@ -659,10 +677,11 @@ def install(app):
         export_block = ''
         if _can_export():
             student_options = ''.join(f'<option value="{s.id}">{escape(s.full_name)}</option>' for s in students)
-            export_block = f'''<div class="card"><h2>Informe gráfico y concentrado</h2><p class="muted">Administración y Dirección pueden generar un archivo institucional con encabezado predeterminado, gráficas y resultados por escuela, grupo o alumno.</p><form method="get" action="/sisat/export.xlsx" class="grid"><label>Ámbito<select name="scope" id="sisat-scope" onchange="document.getElementById('sisat-student').style.display=this.value==='student'?'block':'none'"><option value="school">Toda la escuela</option><option value="group">Grupo {group}</option><option value="student">Alumno</option></select></label><label>Habilidad<select name="skill"><option value="">Todas</option>{''.join(f'<option value="{k}">{escape(v["title"])}</option>' for k,v in SKILLS.items())}</select></label><label id="sisat-student" style="display:none">Alumno<select name="student_id">{student_options}</select></label><div><button>Generar informe Excel</button></div></form></div>'''
+            school_option = '<option value="school">Toda la escuela</option>' if _profile().role in ('ADMIN', 'DIRECCION') else ''
+            export_block = f'''<div class="card"><h2>Informe gráfico y concentrado</h2><p class="muted">Descarga los resultados guardados con encabezado institucional, gráficas y concentrado. Docentes: su grupo o sus alumnos. Administración y Dirección: también toda la escuela.</p><form method="get" action="/sisat/export.xlsx" class="grid"><label>Ámbito<select name="scope" id="sisat-scope" onchange="document.getElementById('sisat-student').style.display=this.value==='student'?'block':'none'"><option value="group">Grupo {group}</option>{school_option}<option value="student">Alumno</option></select></label><label>Habilidad<select name="skill"><option value="">Todas</option>{''.join(f'<option value="{k}">{escape(v["title"])}</option>' for k,v in SKILLS.items())}</select></label><label id="sisat-student" style="display:none">Alumno<select name="student_id">{student_options}</select></label><div><button>Descargar resultados Excel</button></div></form></div>'''
         template_block = ''
         if _can_capture():
-            template_block = f'''<div class="card"><h2>Formato automatizado de captura</h2><p>Descarga un Excel del grupo {group} con los alumnos precargados, listas desplegables, puntajes, niveles y resumen automático.</p><a href="/sisat/formato-captura.xlsx" class="sisat-btn">Descargar formato Excel</a><p class="muted">Incluye lectura, escritura, cálculo mental y las rúbricas oficiales.</p><hr style="border:0;border-top:1px solid #e8edf4;margin:18px 0"><h3>Importar resultados</h3><p class="muted">Después de llenar el formato, selecciónalo para guardar los resultados en la plataforma.</p><form method="post" action="/sisat/importar-formato" enctype="multipart/form-data" class="grid"><label>Archivo Excel<input type="file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label><div><button>Importar resultados</button></div></form></div>'''
+            template_block = f'''<div class="card"><h2>Formato automatizado de captura</h2><p>Descarga un Excel del grupo {group} con los alumnos precargados, listas desplegables, puntajes, niveles y resumen automático.</p><a href="/sisat/formato-captura.xlsx" class="sisat-btn">Descargar formato vacío para captura</a><p class="muted">Este formato no contiene las calificaciones guardadas. Para obtenerlas utiliza «Descargar resultados Excel». Incluye lectura, escritura, cálculo mental y las rúbricas oficiales.</p><hr style="border:0;border-top:1px solid #e8edf4;margin:18px 0"><h3>Importar resultados</h3><p class="muted">Después de llenar el formato, selecciónalo para guardar los resultados en la plataforma.</p><form method="post" action="/sisat/importar-formato" enctype="multipart/form-data" class="grid"><label>Archivo Excel<input type="file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label><div><button>Importar resultados</button></div></form></div>'''
         materials_block = ''
         if _can_capture():
             materials_block = '''<div class="card"><h2>Actividades nuevas en PDF</h2><p>Genera lecturas originales con preguntas graduadas o ejercicios de escritura que permiten observar todos los componentes de las rúbricas.</p><a href="/sisat/materiales" class="sisat-btn">Generar actividades PDF</a></div>'''
@@ -802,10 +821,14 @@ def install(app):
     @app.route('/sisat/export.xlsx')
     def sisat_export():
         if not session.get('uid'): return redirect('/login')
-        if not _can_export(): flash('Solo Administración y Dirección pueden exportar concentrados SiSAT.'); return redirect('/sisat')
+        if not _can_export(): flash('Tu rol no permite descargar resultados SiSAT.'); return redirect('/sisat')
         scope = request.args.get('scope', 'group'); scope = scope if scope in ('school','group','student') else 'group'
         skill = request.args.get('skill', ''); student_id = request.args.get('student_id', type=int)
-        output = _export_workbook(scope, skill, student_id)
+        try:
+            output = _export_workbook(scope, skill, student_id)
+        except ValueError as exc:
+            flash(str(exc))
+            return redirect('/sisat')
         return send_file(output, as_attachment=True, download_name=f'sisat_{scope}_{date.today().isoformat()}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
     @app.after_request
@@ -816,3 +839,4 @@ def install(app):
             marker = '<a class="nav-link logout" href="/logout">'; link = '<a class="nav-link" href="/sisat"><span class="nav-icon">▦</span><span>SiSAT</span></a>'
             if marker in html: html = html.replace(marker, link + marker, 1)
         response.set_data(html); response.headers['Content-Length'] = str(len(response.get_data())); return response
+
