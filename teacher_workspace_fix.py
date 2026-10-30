@@ -17,6 +17,9 @@ def install(app):
             return None
         if request.path.startswith('/account/password'):
             return None
+        # Los clubes reúnen alumnos de varios grupos y tienen permisos propios.
+        if request.path == '/clubs' or request.path.startswith('/clubs/'):
+            return None
 
         access = tgp._access(uid)
         if not access:
@@ -36,3 +39,4 @@ def install(app):
         if getattr(fn, '__name__', '') == 'enforce_teacher_single_group':
             funcs[index] = enforce_teacher_workspace
             break
+

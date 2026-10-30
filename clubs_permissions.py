@@ -59,11 +59,13 @@ def _can_edit_club(club_id):
         return True
     if p.role != 'DOCENTE':
         return False
+    activity = core.db.session.get(clubs_sports.ClubSport, club_id)
+    if not activity or not activity.active:
+        return False
+    if activity.teacher_user_id == session.get('uid'):
+        return True
     auth = _authorization_for_teacher(session.get('uid'))
     if not auth:
-        return False
-    activity = core.db.session.get(clubs_sports.ClubSport, club_id)
-    if not activity:
         return False
     kind = (activity.kind or 'CLUB').strip().upper()
     allowed_id = auth.sport_id if kind == 'DEPORTE' else auth.club_id
@@ -79,6 +81,8 @@ def _patched_allowed(club=None):
     if request.method == 'GET':
         return True
     if p.role == 'ADMIN':
+        return True
+    if p.role == 'DOCENTE' and request.endpoint == 'clubs_create':
         return True
     return bool(club and _can_edit_club(club.id))
 
@@ -130,7 +134,7 @@ def _admin_panel():
     return f'''
     <div class="card" id="club-permissions-admin">
       <h2>Autorizaciones de docentes</h2>
-      <p class="muted">Cada docente puede modificar <b>un club y un deporte</b>, además de su grupo autorizado. El administrador decide cuáles. Los demás espacios permanecen en modo consulta.</p>
+      <p class="muted">Todos los docentes pueden crear y administrar sus propias listas. Aquí puedes autorizar adicionalmente un club y un deporte de otro responsable, vinculados a su grupo autorizado.</p>
       <form method="post" action="/clubs/permissions/save" class="grid">
         <div><label>Docente</label><select name="teacher_user_id" required><option value="">Seleccionar…</option>{_teacher_options()}</select></div>
         <div><label>Club autorizado</label><select name="club_id">{_activity_options('CLUB')}</select></div>
@@ -144,7 +148,7 @@ def _admin_panel():
 
 def _teacher_authorization_note(auth):
     if not auth:
-        return '<div class="card"><b>Sin autorización de edición.</b> Puedes consultar el módulo, pero el administrador debe asignarte un club, un deporte y tu grupo para que puedas modificarlos.</div>'
+        return '<div class="card"><b>Puedes crear tus listas de clubes y deportes y agregar alumnos.</b> Administra las listas que crees; para editar las de otro responsable, solicita autorización al administrador.</div>'
     activities = {c.id: c for c in clubs_sports.ClubSport.query.all()}
     club = activities.get(auth.club_id) if auth.club_id else None
     sport = activities.get(auth.sport_id) if auth.sport_id else None
@@ -154,7 +158,7 @@ def _teacher_authorization_note(auth):
         '<div class="card"><b>Autorización vigente:</b> '
         f'Club: {escape(club_name)} · Deporte: {escape(sport_name)} · '
         f'Grupo: {escape(dict(GROUPS).get(auth.group_code, auth.group_code))}. '
-        'Solo esos dos espacios pueden ser modificados por tu cuenta.</div>'
+        'También puedes crear y administrar tus propias listas.</div>'
     )
 
 
@@ -164,15 +168,16 @@ def _decorate_clubs_page(html):
         return html
     if request.path == '/clubs':
         if p.role == 'ADMIN':
-            marker = '<div class="card scroll">'
+            marker = '<main>'
             if marker in html and 'id="club-permissions-admin"' not in html:
-                html = html.replace(marker, _admin_panel() + marker, 1)
+                html = html.replace(marker, marker + _admin_panel(), 1)
         else:
-            html = re.sub(r'<form method="post" action="/clubs/create".*?</form>', '', html, count=1, flags=re.S)
+            if p.role != 'DOCENTE':
+                html = re.sub(r'<form method="post" action="/clubs/create".*?</form>', '', html, count=1, flags=re.S)
             if p.role == 'DOCENTE':
                 html = html.replace(
-                    '<div class="card scroll">',
-                    _teacher_authorization_note(_authorization_for_teacher(session.get('uid'))) + '<div class="card scroll">',
+                    '<main>',
+                    '<main>' + _teacher_authorization_note(_authorization_for_teacher(session.get('uid'))),
                     1,
                 )
     elif request.path.startswith('/clubs/') and p.role != 'ADMIN':
@@ -180,7 +185,7 @@ def _decorate_clubs_page(html):
         editable = bool(cid and _can_edit_club(cid))
         if not editable:
             html = html.replace('</head>', '<style id="clubs-readonly">form[method="post"] button{display:none!important}.readonly-note{background:#fff4d8;border:1px solid #e8c979;padding:11px 14px;border-radius:10px;margin-bottom:14px;font-weight:750}</style></head>', 1)
-            html = html.replace('<main>', '<main><div class="readonly-note">Modo consulta: puedes visualizar esta información, pero solo puedes modificar el club y el deporte que el administrador te asignó.</div>', 1)
+            html = html.replace('<main>', '<main><div class="readonly-note">Modo consulta: puedes modificar tus propias listas y las que el administrador te haya asignado.</div>', 1)
     return html
 
 
@@ -260,10 +265,12 @@ def install(app):
             return redirect('/login')
         if p.role == 'ADMIN':
             return None
+        if p.role == 'DOCENTE' and request.endpoint == 'clubs_create':
+            return None
         cid = _club_id_from_path(request.path)
         if p.role == 'DOCENTE' and cid and _can_edit_club(cid):
             return None
-        flash('Este apartado es de consulta para tu cuenta. Solo puedes modificar el club y el deporte que el administrador te haya asignado.')
+        flash('Solo puedes modificar tus propias listas y las que el administrador te haya asignado.')
         return redirect(request.referrer or '/clubs')
 
     @app.post('/clubs/permissions/save')
@@ -367,3 +374,4 @@ def install(app):
         response.set_data(html)
         response.headers['Content-Length'] = str(len(response.get_data()))
         return response
+

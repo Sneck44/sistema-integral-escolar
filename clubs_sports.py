@@ -295,7 +295,7 @@ def install(app):
         if not _allowed(): return redirect('/')
         clubs=_clubs_for_user()
         rows=''.join(f'<tr class="quick-item" data-search="{escape(c.name+" "+(c.kind or ""),quote=True)}"><td><b>{escape(c.name)}</b><br><span class="pill">{escape(c.kind)}</span></td><td>{ClubMember.query.filter_by(club_id=c.id,active=True).count()}</td><td class="actions"><a class="btn" href="/clubs/{c.id}">Abrir</a><a class="btn alt" href="/clubs/{c.id}/grades.xlsx">Exportar calificaciones</a><a class="btn alt" href="/clubs/{c.id}/print" target="_blank">Lista imprimible</a></td></tr>' for c in clubs)
-        create='''<form method="post" action="/clubs/create" class="grid"><div><label>Nombre del club o deporte</label><input name="name" required placeholder="Ej. Banda de guerra, Fútbol"></div><div><label>Tipo</label><select name="kind"><option>CLUB</option><option>DEPORTE</option></select></div><div style="align-self:end"><button>Crear</button></div></form>'''
+        create='''<form method="post" action="/clubs/create" class="grid"><div><label>Nombre del club o deporte</label><input name="name" required placeholder="Ej. Banda de guerra, Fútbol"></div><div><label>Tipo</label><select name="kind"><option>CLUB</option><option>DEPORTE</option></select></div><div style="align-self:end"><button>Crear lista de club o deporte</button></div></form>'''
         search='''<div class="quick-search"><label>Buscar club o deporte<input type="search" placeholder="Escribe el nombre o tipo…" autocomplete="off" data-quick-filter="#club-search-results .quick-item" data-count-target="#club-search-count" data-empty-target="#club-search-empty"></label><span class="quick-count" id="club-search-count"></span></div>'''
         body=f'<div class="card"><h2>Mis clubes y deportes</h2><p class="muted">Crea tu lista con estudiantes de cualquier grupo de la escuela, toma asistencia y evalúa con la rúbrica institucional.</p>{create}</div><div class="card">{search}<div class="scroll"><table><tr><th>Club / deporte</th><th>Integrantes</th><th>Acciones</th></tr><tbody id="club-search-results">{rows or "<tr><td colspan=3>Aún no hay clubes o deportes.</td></tr>"}</tbody></table></div><p class="quick-empty" id="club-search-empty" hidden>No se encontraron clubes o deportes.</p></div><div class="card"><a class="btn alt" href="/clubs/group-summary">Calificaciones e informes para maestro titular</a></div>'
         return _layout('Evaluación de Clubes y Deportes',body)
@@ -303,14 +303,20 @@ def install(app):
     @app.post('/clubs/create')
     def clubs_create():
         if not _allowed(): return redirect('/')
-        name=request.form.get('name','').strip(); kind=request.form.get('kind','CLUB').strip()
+        name=request.form.get('name','').strip(); kind=request.form.get('kind','CLUB').strip().upper()
+        if kind not in ('CLUB', 'DEPORTE') or not name or len(name) > 120:
+            flash('Escribe un nombre de hasta 120 caracteres y selecciona Club o Deporte.')
+            return redirect('/clubs')
         if name:
-            core.db.session.add(ClubSport(name=name,kind=kind,teacher_user_id=session['uid']))
-            _commit_changes(
+            club = ClubSport(name=name,kind=kind,teacher_user_id=session['uid'])
+            core.db.session.add(club)
+            saved = _commit_changes(
                 f'{name} fue creado correctamente.',
                 'No se pudo crear el club o deporte. Inténtalo nuevamente.',
                 'Error al crear un club o deporte.',
             )
+            if saved:
+                return redirect(f'/clubs/{club.id}#agregar-alumnos')
         return redirect('/clubs')
 
     @app.route('/clubs/<int:cid>', methods=['GET','POST'])
@@ -338,9 +344,9 @@ def install(app):
         opts=''.join(f'<label class="quick-item" data-search="{escape(s.full_name+" "+g,quote=True)}" style="display:block;padding:7px;border-bottom:1px solid #eee"><input style="width:auto" type="checkbox" name="student_id" value="{s.id}" {"checked" if s.id in members else ""}> {escape(s.full_name)} · {escape(g)}</label>' for s,g in _all_students())
         grade_options=''.join(f'<option value="{n}">{n}.º</option>' for n in ('1','2','3'))
         group_options=''.join(f'<option value="{letter}">{letter}</option>' for letter in ('A','B','C'))
-        manual_form=f'''<form method="post" action="/clubs/{cid}/students/create" class="card"><h2>Agregar alumno manualmente</h2><p class="muted">Registra al estudiante, asigna su grado y grupo y agrégalo directamente a este {escape((club.kind or 'club').lower())}.</p><div class="grid"><div><label>Nombre(s)</label><input name="names" required maxlength="120"></div><div><label>Apellido paterno</label><input name="paternal" required maxlength="80"></div><div><label>Apellido materno</label><input name="maternal" maxlength="80"></div><div><label>Grado</label><select name="grade_number" required>{grade_options}</select></div><div><label>Grupo</label><select name="group_name" required>{group_options}</select></div><div><label>Número de lista (opcional)</label><input name="list_no" type="number" min="1" max="99"></div><div style="align-self:end"><button>Agregar al {escape((club.kind or 'club').lower())}</button></div></div></form>'''
+        manual_form=f'''<form method="post" action="/clubs/{cid}/students/create" class="card" id="agregar-alumnos"><h2>Agregar alumno manualmente</h2><p class="muted">Registra al estudiante, asigna su grado y grupo y agrégalo directamente a este {escape((club.kind or 'club').lower())}.</p><div class="grid"><div><label>Nombre(s)</label><input name="names" required maxlength="120"></div><div><label>Apellido paterno</label><input name="paternal" required maxlength="80"></div><div><label>Apellido materno</label><input name="maternal" maxlength="80"></div><div><label>Grado</label><select name="grade_number" required>{grade_options}</select></div><div><label>Grupo</label><select name="group_name" required>{group_options}</select></div><div><label>Número de lista (opcional)</label><input name="list_no" type="number" min="1" max="99"></div><div style="align-self:end"><button>Agregar alumno a la lista</button></div></div></form>'''
         student_search='''<div class="quick-search"><label>Buscar alumno rápidamente<input type="search" placeholder="Nombre, grado o grupo…" autocomplete="off" data-quick-filter="#student-search-results .quick-item" data-count-target="#student-search-count" data-empty-target="#student-search-empty"></label><span class="quick-count" id="student-search-count"></span></div>'''
-        body=f'''<div class="card"><div class="actions no-print"><a class="btn" href="/clubs/{cid}/attendance">Pase de lista</a><a class="btn" href="/clubs/{cid}/evaluate">Evaluar con rúbrica</a><a class="btn alt" href="/clubs/{cid}/grades.xlsx">Exportar calificaciones</a><a class="btn alt" href="/clubs/{cid}/print" target="_blank">Lista imprimible</a></div><h2>{escape(club.name)}</h2><p>{len(members)} estudiante(s) seleccionado(s).</p></div>{manual_form}<form method="post" class="card"><h2>Seleccionar estudiantes ya registrados</h2>{student_search}<div id="student-search-results" style="max-height:520px;overflow:auto">{opts}</div><p class="quick-empty" id="student-search-empty" hidden>No se encontraron alumnos con ese nombre, grado o grupo.</p><br><button>Guardar lista</button></form>'''
+        body=f'''<div class="card"><div class="actions no-print"><a class="btn" href="#agregar-alumnos">Agregar alumnos</a><a class="btn" href="/clubs/{cid}/attendance">Pase de lista</a><a class="btn" href="/clubs/{cid}/evaluate">Evaluar con rúbrica</a><a class="btn alt" href="/clubs/{cid}/grades.xlsx">Exportar calificaciones</a><a class="btn alt" href="/clubs/{cid}/print" target="_blank">Lista imprimible</a></div><h2>{escape(club.name)}</h2><p>{len(members)} estudiante(s) seleccionado(s).</p></div>{manual_form}<form method="post" class="card"><h2>Seleccionar estudiantes ya registrados</h2>{student_search}<div id="student-search-results" style="max-height:520px;overflow:auto">{opts}</div><p class="quick-empty" id="student-search-empty" hidden>No se encontraron alumnos con ese nombre, grado o grupo.</p><br><button>Guardar lista</button></form>'''
         return _layout(club.name,body)
 
     @app.post('/clubs/<int:cid>/students/create')
@@ -495,4 +501,5 @@ def install(app):
             card='<div class="card" style="margin-bottom:16px"><h2>Evaluación de Clubes y Deportes</h2><p class="muted">Listas de integrantes, asistencia, rúbrica institucional e informes para docentes titulares.</p><a class="btn" href="/clubs">Abrir módulo</a></div>'
             html=html.replace('<main class="wrap">','<main class="wrap">'+card,1)
         response.set_data(html); response.headers['Content-Length']=str(len(response.get_data())); return response
+
 
