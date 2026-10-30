@@ -167,19 +167,32 @@ def _decorate_clubs_page(html):
     if not p or not p.active:
         return html
     if request.path == '/clubs':
-        if p.role == 'ADMIN':
-            marker = '<main>'
-            if marker in html and 'id="club-permissions-admin"' not in html:
-                html = html.replace(marker, marker + _admin_panel(), 1)
+        # Both editing roles use the same workspace, not separate landing pages.
+        if p.role in ('ADMIN', 'DOCENTE'):
+            html = html.replace('<h2>Mis clubes y deportes</h2>', '<h2>Clubes y deportes</h2>', 1)
+            html = html.replace(
+                '<form method="post" action="/clubs/create"',
+                '<form id="crear-lista" method="post" action="/clubs/create"', 1,
+            )
+            shortcuts = (
+                '<div class="card no-print" id="clubs-workspace-actions">'
+                '<div class="actions" aria-label="Opciones de clubes y deportes">'
+                '<a class="btn" href="#crear-lista">Crear lista de club o deporte</a>'
+                '<a class="btn alt" href="#club-search-results">Ver listas y agregar alumnos</a>'
+                '<a class="btn alt" href="/clubs/group-summary">Calificaciones e informes</a>'
+                '</div><p class="muted">Abre una lista para agregar alumnos, pasar asistencia, '
+                'evaluar y exportar calificaciones. Puedes editar las listas que creaste '
+                'o tienes asignadas; el administrador puede administrar todas.</p></div>'
+            )
+            html = html.replace('</h1>', '</h1>' + shortcuts, 1)
         else:
-            if p.role != 'DOCENTE':
-                html = re.sub(r'<form method="post" action="/clubs/create".*?</form>', '', html, count=1, flags=re.S)
-            if p.role == 'DOCENTE':
-                html = html.replace(
-                    '<main>',
-                    '<main>' + _teacher_authorization_note(_authorization_for_teacher(session.get('uid'))),
-                    1,
-                )
+            html = re.sub(r'<form method="post" action="/clubs/create".*?</form>', '', html, count=1, flags=re.S)
+        if p.role == 'ADMIN' and 'id="club-permissions-admin"' not in html:
+            # Administrative security controls are separate from the shared workspace.
+            panel = ('<details class="card no-print" id="club-admin-settings">'
+                     '<summary>Administrar permisos de docentes</summary>'
+                     + _admin_panel() + '</details>')
+            html = html.replace('</main>', panel + '</main>', 1)
     elif request.path.startswith('/clubs/') and p.role != 'ADMIN':
         cid = _club_id_from_path(request.path)
         editable = bool(cid and _can_edit_club(cid))
