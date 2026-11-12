@@ -15,6 +15,19 @@ def _grid_value(grade):
     return (grade.code or '').upper() or (str(grade.score) if grade.score is not None else '')
 
 
+def _grid_average(activities, grade_map, student_id):
+    values = []
+    for activity in activities:
+        grade = grade_map.get((student_id, activity.id))
+        if not grade or grade.code or grade.score is None:
+            continue
+        maximum = activity.max_score
+        if (maximum and math.isfinite(maximum) and maximum > 0
+                and math.isfinite(grade.score) and 0 <= grade.score <= maximum):
+            values.append(grade.score / maximum * 10)
+    return sum(values) / len(values) if values else None
+
+
 def _grid_can_edit():
     import multi_user
     import group_workspaces
@@ -108,6 +121,18 @@ def _grade_grid():
     query = core.Activity.query
     if trimester:
         query = query.filter_by(trimester=trimester)
+    dates = {}
+    for key in ('grid_from', 'grid_to'):
+        try:
+            dates[key] = datetime.strptime(request.args.get(key, ''), '%Y-%m-%d').date()
+        except ValueError:
+            dates[key] = None
+    if dates['grid_from'] and dates['grid_to'] and dates['grid_from'] > dates['grid_to']:
+        dates['grid_from'], dates['grid_to'] = dates['grid_to'], dates['grid_from']
+    if dates['grid_from']:
+        query = query.filter(core.Activity.activity_date >= dates['grid_from'])
+    if dates['grid_to']:
+        query = query.filter(core.Activity.activity_date <= dates['grid_to'])
     activities = query.order_by(core.Activity.activity_date, core.Activity.id).all()
     links = ActivitySubject.query.filter(ActivitySubject.activity_id.in_([a.id for a in activities])).all() if activities else []
     subject_map = {a.id: {a.subject_id} for a in activities}
@@ -130,7 +155,9 @@ def _grade_grid():
     names = {s.id: s.name for s in subjects}
     headers = ''.join(
         f'<th>{esc(a.name)}<small>{esc(" · ".join(names[s] for s in sorted(subject_map[a.id]) if s in names))}</small>'
+        f'<small>Fecha: {a.activity_date.strftime("%d/%m/%Y") if a.activity_date else "Sin fecha"}</small>'
         f'<small>{esc(a.trimester)} · Máx. {esc(a.max_score)}</small></th>' for a in activities)
+    headers += '<th class="grid-average">Promedio general<small>Actividades mostradas · escala de 10</small></th>'
     headers += ''.join(f'<th class="grid-average">Promedio<small>{esc(s.name)}</small></th>' for s in visible_subjects)
     rows = []
     for student in students:
@@ -141,29 +168,30 @@ def _grade_grid():
                          f'data-student="{student.id}" data-activity="{a.id}" data-original="{esc(value)}" '
                          f'data-subjects="{esc(json.dumps(sorted(subject_map[a.id])))}" data-max="{esc(a.max_score)}" '
                          f'value="{esc(value)}" placeholder="—" {"readonly" if not editable else ""}></td>')
+        avg = _grid_average(activities, grade_map, student.id)
+        cells.append(f'<td class="grid-average {"grid-risk" if avg is not None and avg < 6 else ""}" data-average="all">'
+                     f'{"—" if avg is None else f"{avg:.2f}"}</td>')
         for subject in visible_subjects:
-            nums = []
-            for a in activities:
-                g = grade_map.get((student.id, a.id))
-                if subject.id in subject_map[a.id] and g and g.score is not None and a.max_score and a.max_score > 0:
-                    nums.append(max(0, min(10, g.score / a.max_score * 10)))
-            avg = sum(nums) / len(nums) if nums else None
+            avg = _grid_average([a for a in activities if subject.id in subject_map[a.id]], grade_map, student.id)
             cells.append(f'<td class="grid-average {"grid-risk" if avg is not None and avg < 6 else ""}" data-average="{subject.id}">'
                          f'{"—" if avg is None else f"{avg:.2f}"}</td>')
         rows.append(f'<tr data-grid-student="{esc(student.full_name.lower())}"><td class="grid-student">{student.list_no or ""} · {esc(student.full_name)}</td>{"".join(cells)}</tr>')
     table = f'<table><thead><tr><th class="grid-student">Alumno</th>{headers}</tr></thead><tbody>{"".join(rows)}</tbody></table>' if students else '<p>No hay alumnos activos en este grupo.</p>'
     return GRADE_GRID_CSS + f'''
     <section class="card" id="grade-grid">
-      <h2>Concentrado de calificaciones</h2>
+      <h2>Concentrado de resultados y fechas</h2>
       <p>Grupo {esc(group_workspaces.active_group_label())} · {len(students)} alumnos · {len(activities)} actividades.</p>
       <form method="get" action="/activities#grade-grid" class="grade-grid-filters">
         <label>Trimestre<select name="grid_trim">{trim_options}</select></label>
         <label>Asignatura<select name="grid_subject">{subject_options}</select></label>
+        <label>Desde<input type="date" name="grid_from" value="{dates['grid_from'].isoformat() if dates['grid_from'] else ''}"></label>
+        <label>Hasta<input type="date" name="grid_to" value="{dates['grid_to'].isoformat() if dates['grid_to'] else ''}"></label>
         <button>Mostrar concentrado</button>
       </form>
       <label>Buscar alumno<input id="grid-search" type="search" placeholder="Nombre o apellidos"></label>
       <p class="muted">Captura el puntaje de cada actividad o NP, NE, J, P. Vacío = sin calificar.
       Los promedios usan solo notas numéricas, normalizadas a 10; cada actividad cuenta en todas sus asignaturas.
+      El promedio general cuenta cada actividad mostrada una sola vez, con el mismo peso; no es la calificación trimestral ponderada.
       Rojo = promedio menor a 6. Los promedios se actualizan mientras editas; guarda para confirmar.</p>
       {'' if activities else '<p>No hay actividades para los filtros seleccionados.</p>'}
       <div class="grade-grid-scroll">{table}</div>
@@ -209,7 +237,7 @@ GRADE_GRID_JS = r'''<script>
  const average=row=>{
    const marks=[...row.querySelectorAll('.grid-mark')];
    row.querySelectorAll('[data-average]').forEach(cell=>{
-     const values=marks.filter(i=>JSON.parse(i.dataset.subjects).includes(Number(cell.dataset.average))).map(i=>{
+     const values=marks.filter(i=>cell.dataset.average==='all'||JSON.parse(i.dataset.subjects).includes(Number(cell.dataset.average))).map(i=>{
        const raw=i.value.trim().replace(',','.'), max=Number(i.dataset.max), val=Number(raw);
        return raw && Number.isFinite(val) && max>0 && val>=0 && val<=max ? val/max*10 : null;
      }).filter(v=>v!==null);
@@ -738,4 +766,5 @@ def install(app):
           <p style="margin-top:16px"><a href="/activities">Cancelar y volver</a></p>
         </div>'''
         return core.page('Borrar actividad', body)
+
 
