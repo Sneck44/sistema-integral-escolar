@@ -3,8 +3,11 @@ from datetime import datetime
 import json
 import math
 import secrets
+import io
+import unicodedata
+from urllib.parse import urlencode
 
-from flask import request, redirect, flash, session, current_app
+from flask import request, redirect, flash, session, current_app, send_file, abort
 
 import app as core
 
@@ -108,8 +111,7 @@ def _save_grade_grid():
     return jsonify(ok=True, message=f'Guardadas {len(saved)} calificaciones.', saved=saved)
 
 
-def _grade_grid():
-    import group_workspaces
+def _grade_grid_data():
     from academic_grade_reports import _subject_order_key
     trimester = request.args.get('grid_trim', '')
     if trimester not in core.TRIMS:
@@ -145,6 +147,17 @@ def _grade_grid():
     grades = core.Grade.query.filter(core.Grade.activity_id.in_([a.id for a in activities]),
                                      core.Grade.student_id.in_([s.id for s in students])).all() if activities and students else []
     grade_map = {(g.student_id, g.activity_id): g for g in grades}
+    return trimester, subject_id, subjects, dates, activities, subject_map, visible_subjects, students, grade_map
+
+
+def _grade_grid():
+    import group_workspaces
+    trimester, subject_id, subjects, dates, activities, subject_map, visible_subjects, students, grade_map = _grade_grid_data()
+    export_url = '/activities/concentrado.xlsx?' + urlencode({
+        'grid_trim': trimester, 'grid_subject': subject_id or '',
+        'grid_from': dates['grid_from'].isoformat() if dates['grid_from'] else '',
+        'grid_to': dates['grid_to'].isoformat() if dates['grid_to'] else '',
+    })
     editable = _grid_can_edit()
     session.setdefault('grade_grid_csrf', secrets.token_urlsafe(32))
     esc = lambda value: escape(str(value), quote=True)
@@ -188,6 +201,8 @@ def _grade_grid():
         <label>Hasta<input type="date" name="grid_to" value="{dates['grid_to'].isoformat() if dates['grid_to'] else ''}"></label>
         <button>Mostrar concentrado</button>
       </form>
+      <p><a class="btn" id="grid-export" href="{escape(export_url, quote=True)}">Exportar concentrado a Excel</a></p>
+      <p class="muted">El Excel incluye los resultados guardados y los filtros aplicados. Guarda tus cambios antes de exportar.</p>
       <label>Buscar alumno<input id="grid-search" type="search" placeholder="Nombre o apellidos"></label>
       <p class="muted">Captura el puntaje de cada actividad o NP, NE, J, P. Vacío = sin calificar.
       Los promedios usan solo notas numéricas, normalizadas a 10; cada actividad cuenta en todas sus asignaturas.
@@ -229,6 +244,12 @@ GRADE_GRID_JS = r'''<script>
  const inputs=[...root.querySelectorAll('.grid-mark')], button=root.querySelector('#grid-save'), message=root.querySelector('#grid-message');
  let busy=false;
  const changed=()=>inputs.filter(i=>i.value!==i.dataset.original);
+ root.querySelector('#grid-export').addEventListener('click',e=>{
+   if(busy||changed().length){e.preventDefault();message.textContent='Guarda las calificaciones antes de exportar el concentrado.';return;}
+   const url=new URL(e.currentTarget.href,location.href);
+   url.searchParams.set('grid_search',root.querySelector('#grid-search').value);
+   e.currentTarget.href=url.toString();
+ });
  const update=()=>{
    const count=changed().length;
    if(button)button.disabled=busy||!count;
@@ -424,7 +445,76 @@ ACTIVITY_CSS = '''<style id="activity-multisubject-css">
 </style>'''
 
 
+def _grade_grid_excel():
+    import group_workspaces as gw
+    import multi_user
+    import xlsxwriter
+    if not session.get('uid'):
+        return redirect('/login')
+    profile = multi_user._profile(session['uid'])
+    if not profile or not profile.active or profile.role not in ('ADMIN', 'DOCENTE', 'DIRECCION', 'USAER', 'CONSULTA'):
+        abort(403)
+    group = gw.active_group_code()
+    if not group or (profile.role == 'DOCENTE' and gw._teacher_group_code(session['uid']) != group):
+        flash('Selecciona tu grupo autorizado antes de exportar el concentrado.')
+        return redirect('/activities')
+    trimester, subject_id, subjects, dates, activities, subject_map, visible_subjects, students, grade_map = _grade_grid_data()
+    clean = lambda s: ''.join(c for c in unicodedata.normalize('NFD', s.lower()) if unicodedata.category(c) != 'Mn')
+    search = clean(request.args.get('grid_search', ''))
+    students = [s for s in students if search in clean(s.full_name)]
+    if not students or not activities:
+        flash('No hay alumnos o actividades para los filtros seleccionados.')
+        return redirect('/activities?' + urlencode({k: request.args.get(k, '') for k in ('grid_trim','grid_subject','grid_from','grid_to')}) + '#grade-grid')
+    if len(activities) + len(visible_subjects) + 3 > 16384:
+        flash('Selecciona un periodo menor para exportar a Excel.')
+        return redirect('/activities#grade-grid')
+    output = io.BytesIO()
+    wb = xlsxwriter.Workbook(output, {'in_memory': True, 'strings_to_formulas': False, 'strings_to_urls': False})
+    ws = wb.add_worksheet('Concentrado')
+    title = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#74142B', 'font_color': '#FFFFFF'})
+    header = wb.add_format({'bold': True, 'bg_color': '#F4ECEF', 'border': 1, 'text_wrap': True, 'valign': 'vcenter'})
+    cell = wb.add_format({'border': 1, 'num_format': '0.00', 'valign': 'top'})
+    avg_fmt = wb.add_format({'border': 1, 'num_format': '0.00', 'bg_color': '#F0F6F3', 'bold': True})
+    risk = wb.add_format({'bg_color': '#FDE7E7', 'font_color': '#AC2323'})
+    date_fmt = wb.add_format({'border': 1, 'num_format': 'dd/mm/yyyy'})
+    names = {s.id:s.name for s in subjects}
+    last_col = 2 + len(activities) + len(visible_subjects)
+    config = core.cfg()
+    ws.merge_range(0, 0, 0, last_col, 'CONCENTRADO DE RESULTADOS DE ACTIVIDADES', title)
+    ws.merge_range(1, 0, 1, last_col, f'{config.school or ""} · CCT {config.cct or ""} · Ciclo {config.cycle or ""} · Grupo {group}')
+    ws.merge_range(2, 0, 2, last_col, f'{trimester or "Todos los trimestres"} · {names.get(subject_id, "Todas las asignaturas")} · Desde {dates["grid_from"] or "inicio"} hasta {dates["grid_to"] or "fin"}')
+    ws.merge_range(3, 0, 3, last_col, 'Resultados guardados. Promedios en escala de 10; excluyen vacíos y códigos. Cada actividad cuenta una vez en el promedio general.')
+    ws.write_row(5, 0, ['No.', 'Alumno'] + [a.name for a in activities] + ['Promedio general'] + [f'Promedio {s.name}' for s in visible_subjects], header)
+    ws.write(6, 1, 'Fecha de actividad', header)
+    ws.write(7, 1, 'Asignaturas / máximo', header)
+    for col,a in enumerate(activities,2):
+        if a.activity_date: ws.write_datetime(6,col,datetime.combine(a.activity_date,datetime.min.time()),date_fmt)
+        ws.write(7,col,' / '.join(names[s] for s in sorted(subject_map[a.id]) if s in names) + f' · Máx. {a.max_score:g}',header)
+    for row, student in enumerate(students,8):
+        ws.write(row,0,student.list_no or '',cell)
+        ws.write(row,1,student.full_name,cell)
+        for col,a in enumerate(activities,2):
+            g = grade_map.get((student.id,a.id))
+            value = (g.code or '').upper() or g.score if g else None
+            if isinstance(value, (int,float)) and not math.isfinite(value): value = None
+            ws.write(row,col,value,cell)
+        selected = [activities] + [[a for a in activities if s.id in subject_map[a.id]] for s in visible_subjects]
+        for col, subset in enumerate(selected,2+len(activities)):
+            ws.write(row,col,_grid_average(subset,grade_map,student.id),avg_fmt)
+    ws.conditional_format(8,2+len(activities),7+len(students),last_col,{'type':'cell','criteria':'<','value':6,'format':risk})
+    ws.set_column(0,0,6); ws.set_column(1,1,34); ws.set_column(2,last_col,22)
+    ws.set_row(5,48); ws.set_row(7,48)
+    ws.freeze_panes(8,2)
+    ws.set_landscape(); ws.fit_to_pages(1,0); ws.repeat_rows(0,7)
+    ws.print_area(0,0,7+len(students),last_col)
+    wb.close(); output.seek(0)
+    response = send_file(output, as_attachment=True, download_name=f'Concentrado_actividades_{group}_{datetime.now():%Y-%m-%d}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
 def install(app):
+    app.add_url_rule('/activities/concentrado.xlsx', 'activity_grid_excel', _grade_grid_excel, methods=['GET'])
     try:
         with app.app_context():
             core.db.create_all()
